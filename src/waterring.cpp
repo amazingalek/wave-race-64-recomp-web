@@ -5,6 +5,7 @@
 #include "wr64/drawdistance.h"
 
 #include <algorithm>
+#include <atomic>
 #include <chrono>
 #include <cmath>
 #include <cstdio>
@@ -16,6 +17,12 @@
 // The game's water height at a world XZ. Recompiled; declaring it is all it
 // takes to call it.
 extern "C" void func_8004D30C(uint8_t* rdram, recomp_context* ctx);
+
+// Rebuilds the window's shape from `D_80192494`: the (du, dv) pairs in
+// D_80160430 and the field offsets and vertex x/z in D_80160A98. The game calls
+// it only from func_8004F9E0, when a scene starts -- so changing the window
+// afterwards means calling it again or the lists still describe the old size.
+extern "C" void func_8004E614(uint8_t* rdram, recomp_context* ctx);
 
 namespace wr64::waterring {
 namespace {
@@ -49,6 +56,25 @@ constexpr uint32_t kCameraY = 0x50;
 // window is a hexagon around the camera*.
 constexpr uint32_t kWindowRadius = 0x00192494;
 constexpr float kCell = 64.0f;   // world units a lattice cell
+
+// Two values `func_8004F9E0` *computes* from N rather than reading from the
+// table, and so the only two that a port setting N behind its back has to
+// compute for itself. Missing them is not subtle: everything that walks the
+// window counts `D_8019249C` entries, so the lists get rebuilt for 817 cells
+// while the walkers still stop at 469.
+constexpr uint32_t kWindowCount = 0x0019249C;   // D_8019249C = 3N(N+1)+1
+constexpr uint32_t kWindowUnits = 0x00192498;   // D_80192498 = N << 6
+
+// gPlayers. Two players halves the window by themselves, and player one's
+// vertex arena holds 497 Vtx against the 823 a 16-cell hexagon needs, so the
+// wider window is one player only.
+constexpr uint32_t kPlayers = 0x000DAB28;
+
+// The window a one-player race runs at, and the one it is widened to. Twelve is
+// the game's own; sixteen is the game's own too, from the opening screen, and is
+// the largest it ships a mesh for.
+constexpr int kRaceCells = 12;
+constexpr int kWideCells = 16;
 
 // `D_800D4B00`, the frame counter. It is incremented once a frame and it is
 // what the game's own wave generators take their phase from
@@ -353,7 +379,8 @@ constexpr WindowSetup kWindowSetups[] = {
     { 10, 2 },    // two players
 };
 
-// WR64_WATER_WINDOW=<cells> overrides it, 10, 12 or 16. Unset changes nothing.
+// WR64_WATER_WINDOW=<cells> pins it to 10, 12 or 16 whatever the setting says.
+// Unset leaves the choice to Draw Distance.
 const WindowSetup* window_override() {
     static const WindowSetup* setup = [] () -> const WindowSetup* {
         const char* value = std::getenv("WR64_WATER_WINDOW");
@@ -369,6 +396,46 @@ const WindowSetup* window_override() {
         return nullptr;
     }();
     return setup;
+}
+
+const WindowSetup* setup_for(int cells) {
+    for (const WindowSetup& s : kWindowSetups) {
+        if (s.cells == cells) return &s;
+    }
+    return nullptr;
+}
+
+// Which window this frame should run, or null to leave the game's own alone.
+//
+// Draw Distance owns it. At Original the port promises the frame the cartridge
+// would have produced, so the water simulates exactly as far as it always did;
+// at Extended the same setting that pushes the scenery out pushes the waves out
+// with it, which is the one a player would expect to move them.
+//
+// Only from a one-player race, and only to a size the game ships a mesh and a
+// parameter set for. `held` remembers that the port did the widening, because
+// once the value is written the game's own is no longer readable -- without it
+// there is no way to tell a forced 16 from the opening screen's own.
+const WindowSetup* wanted_window(const uint8_t* rdram, int current, int* held) {
+    if (const WindowSetup* pinned = window_override()) return pinned;
+
+    const bool one_player = read_word(rdram, kPlayers) == 1;
+    const bool further = drawdistance::reach() != 0;
+
+    if (*held != 0 && current != kWideCells) {
+        *held = 0;           // a scene change put the game's own back
+    }
+    if (*held != 0) {
+        if (one_player && further) return nullptr;      // already wide
+        const WindowSetup* back = setup_for(*held);     // put it back
+        *held = 0;
+        return back;
+    }
+    if (one_player && further && current == kRaceCells) {
+        *held = current;
+        return setup_for(kWideCells);
+    }
+    return nullptr;
 }
 
 // The game's own answer for the height at (x, z).
@@ -394,6 +461,16 @@ int16_t clamp_short(float value) {
 }
 
 }  // namespace
+
+// Published for the display-list rewriter, which runs on the graphics thread
+// and has no recomp_context to read RDRAM through. Written by publish() on the
+// game thread each frame; an int being torn between the two is not a risk worth
+// a lock here, and a stale value costs one frame of the wrong mesh.
+std::atomic<int> g_window_cells{ 12 };
+
+int window_cells() {
+    return g_window_cells.load(std::memory_order_relaxed);
+}
 
 bool enabled() {
     static const bool off = [] {
@@ -427,19 +504,47 @@ void publish(uint8_t* rdram, recomp_context* ctx, uint32_t display_list) {
     // the parameter block can hold means the field is not set up yet -- before a
     // race, between courses -- and the ring falls back to the game's own drawn
     // reach rather than trusting it.
-    // Written back every frame, because the game rewrites both whenever the
-    // scene changes. The two derived values (cell count, radius) are recomputed
-    // by the game from N, so only N and its parameter set are forced here.
-    if (const WindowSetup* wanted = window_override()) {
-        write_word(rdram, kWindowRadius, uint32_t(wanted->cells));
-        const uint32_t from = kParamTable + uint32_t(wanted->set) * kParamWords * 4;
-        for (int w = 0; w < kParamWords; ++w) {
-            write_word(rdram, kParamLive + uint32_t(w) * 4,
-                       read_word(rdram, from + uint32_t(w) * 4));
+    // Applied whenever the game's own value is not the one asked for, which
+    // covers both the first frame of a scene and the game putting its own back.
+    //
+    // Three things have to move together or the water tears: N itself, the
+    // thirteen-word parameter set that goes with it (its first words are the
+    // cell count and the six skirt vertices, all sized to N), and the window's
+    // shape lists, which only func_8004E614 writes. The game does all three in
+    // func_8004F9E0 and never revisits them, so the port does the same three.
+    //
+    // The mesh is the fourth, and the rewriter handles it: the triangles are
+    // baked per size, so Walker::water_mesh_for hands over the game's own
+    // 33-row list in place of its 13-row one. Without that this draws an N=16
+    // arena through an N=12 list, which is what tore the water the first time.
+    static int held_window = 0;
+    if (const WindowSetup* wanted =
+            wanted_window(rdram, int(read_word(rdram, kWindowRadius)), &held_window)) {
+        if (int32_t(read_word(rdram, kWindowRadius)) != wanted->cells) {
+            const int32_t n = wanted->cells;
+            write_word(rdram, kWindowRadius, uint32_t(n));
+            write_word(rdram, kWindowCount, uint32_t(3 * n * (n + 1) + 1));
+            write_word(rdram, kWindowUnits, uint32_t(n << 6));
+            const uint32_t from = kParamTable + uint32_t(wanted->set) * kParamWords * 4;
+            for (int w = 0; w < kParamWords; ++w) {
+                write_word(rdram, kParamLive + uint32_t(w) * 4,
+                           read_word(rdram, from + uint32_t(w) * 4));
+            }
+            // The game's own rebuild, on the game's own thread, with a copied
+            // context for the reasons height_at() gives.
+            recomp_context rebuild = *ctx;
+            rebuild.f_odd = rebuild.mips3_float_mode ? &rebuild.f1.u32l : &rebuild.f0.u32h;
+            func_8004E614(rdram, &rebuild);
+            std::fprintf(stderr,
+                         "[water] simulated window forced to %d cells: %d units,"
+                         " %u cells, shape lists rebuilt\n",
+                         n, n << 6, read_word(rdram, kWindowCount));
+            std::fflush(stderr);
         }
     }
     const int32_t cells = static_cast<int32_t>(read_word(rdram, kWindowRadius));
     const bool window_valid = cells >= 2 && cells <= 64;
+    g_window_cells.store(window_valid ? cells : 12, std::memory_order_relaxed);
     const float full_to = window_valid ? waves_full_to(cells) : kSeamRadius;
 
     const uint32_t index = read_word(rdram, kCameraIndex) & 3;

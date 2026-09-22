@@ -1570,6 +1570,31 @@ struct Walker {
                segmented_list == 0x0100D258 || segmented_list == 0x0100E680;
     }
 
+    // Draws a one-player race's water with the mesh the opening screen uses.
+    //
+    // The four lists above are not four styles of the same surface: they are one
+    // per **window size**, because the triangles are baked in ROM and the game
+    // simulates water in a hexagon of `D_80192494` cells. Their sizes give them
+    // away, and the gaps between the four segmented addresses match the gaps
+    // between the four lists in the ROM exactly:
+    //
+    //   0x010082F0  12,960 B  77 blocks, 1,548 triangles   N=16, opening
+    //   0x0100B590   7,368 B  50 blocks,   876 triangles   N=12, a 1P race
+    //   0x0100D258            38 blocks,   612 triangles   N=10, 2P view 0
+    //   0x0100E680            38 blocks,   612 triangles   N=10, 2P view 1
+    //
+    // So a race can be given the wider mesh without generating any geometry:
+    // wr64::waterring sets the window to 16 and refills the arena as a 33-row
+    // hexagon, and this hands the game's own 33-row list to the microcode in
+    // place of the 13-row one it asked for. Both are the cartridge's data.
+    //
+    // Only in one player. Player 1's vertex arena holds 497 Vtx against the 823
+    // an N=16 hexagon needs, so the split-screen lists are never substituted.
+    uint32_t water_mesh_for(uint32_t segmented_list) const {
+        if (segmented_list != 0x0100B590) return segmented_list;
+        return wr64::waterring::window_cells() == 16 ? 0x010082F0 : segmented_list;
+    }
+
     // The water ring: geometry for the sea outside the game's own patch.
     //
     // The game's patch reaches 922 units and there is nothing beyond it -- the
@@ -3282,7 +3307,7 @@ uint32_t rewrite(uint8_t* rdram, uint32_t list_vaddr) {
             const bool known_water = water && w.known_water_material(w1);
             if (water && w.water_interp) w.vertex_interp_group(Walker::kWaterId);
             if (known_water) w.water_material(true);
-            w.emit(w0, w1);
+            w.emit(w0, w.water_mesh_for(w1));
             // The ring goes after the game's own surface and inside the same
             // material bracket, so the modern renderer shades both as one sea.
             // Its inner edge is fitted to the patch's outline first: drawn after

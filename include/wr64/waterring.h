@@ -122,4 +122,11 @@ const Ring* claim(uint32_t display_list);
 // could make a machine worse.
 bool enabled();
 
+// The radius, in 64-unit lattice cells, of the window the game is simulating
+// water in this frame -- `D_80192494`. 16 on the opening and rider select, 12 in
+// a one-player race, 10 in two players, unless WR64_WATER_WINDOW has forced it.
+// The display-list rewriter reads this to decide which of the game's four baked
+// water meshes to hand the microcode; see Walker::water_mesh_for.
+int window_cells();
+
 }  // namespace wr64::waterring

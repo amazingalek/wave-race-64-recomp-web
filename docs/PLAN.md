@@ -433,6 +433,53 @@ distances; the sea still reaches the far plane; a GPU before/after on the Iris X
 for every performance change; the hand-over jump at a world point no worse than
 before; and `WATER.md` agreeing with the code.
 
+### 11 — Water that is correct, not larger
+
+Phase 10 ended with a decision: the simulated window reaches 16 cells, which is
+where the cartridge's own data ends, and **going further is not worth its cost**.
+Past 16 there is no baked mesh, so every larger window needs a generated display
+list plus three buffers re-pointed, for 1,280 units at N=20 against 1,024 -- and
+the integrator is `O(N^2)`. The generator is written up in `PORTING.md` if that
+judgement is ever revisited; it is not scheduled.
+
+What is scheduled is everything the water gets *wrong* today. Each of these is
+already measured or already recorded; none of them is a new investigation.
+
+1. *The heights are systematically low.* `func_8004D30C` returns the plane
+   constant over its normal's length, not a height; a caller wanting a height
+   multiplies back by `sqrt(d0^2+d1^2+1)`. `src/waterring.cpp` and
+   `src/waterfield.cpp` do not -- **0.6% typical, up to 15% on the steepest
+   slopes**. Recorded in `GAME-INTERNALS.md` and unfixed since it was found.
+2. *The second view has no ring.* `claim()` erases through the match and
+   `publish()` runs once a task, so the second water call in a split-screen frame
+   gets nothing. The comment above it and the vertex-scratch budget both claim
+   otherwise. Decide which is right and make them agree.
+3. *Two silent failures in the ring emitter.* A vertex-scratch overrun returns
+   without logging **and** changes the vertex count, which fails RT64's
+   `curVertexCount == prevVertexCount` test and costs the ring a frame of
+   interpolation. The int16 vertex clamp is reachable now that `outer` is 16,192,
+   and `fit_ring_to_patch` casts with no clamp at all -- that wraps.
+4. *Debug tooling that does not work where it is needed.*
+   `WR64_WATER_RING_DEBUG` paints the ring's **vertex shade** magenta, which the
+   modern water shader ignores -- so it does nothing at the quality it would be
+   used at. And `wr64.log` is opened without sharing, so it cannot be read while
+   the game runs. Both are "ships in every build" features that do not.
+5. *The docs and the code disagree.* Much was corrected in phase 10; what is left
+   is `WATER.md`'s switch table, which omits `WR64_WATER_PROFILE`,
+   `WR64_WATER_STATS` and `WR64_FRAME_PROFILE` -- the three that would close the
+   "no GPU measurement on this hardware" gap -- and every ring switch added since.
+6. *The GPU cost of the water renderer has never been measured on the target.*
+   The only numbers are the fork's M3 Max. `WR64_WATER_PROFILE` writes per-pass
+   timings and has been in the tree, undocumented, the whole time. Then the free
+   wins it would confirm: `WaterFieldCS` dispatches all four craft tiles even
+   when a tile has no craft, and the surface pass rasterises the whole sea into a
+   texture nothing samples unless spray is on at Best.
+
+**Gate:** the seam and the far sea unchanged from phase 10's verified state; a
+before/after GPU number on the laptop for anything in (6); split-screen behaving
+the same as one player wherever it is meant to; and no switch in `WATER.md`'s
+table that the code does not read, nor any the code reads that is missing from it.
+
 ## Standing constraints
 
 - No ROM, asset, or ROM-derived file is ever committed. The user supplies the

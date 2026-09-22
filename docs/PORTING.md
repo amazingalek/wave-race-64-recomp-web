@@ -1981,6 +1981,47 @@ and slot *i* stays continuous.
   own boundary conditions visible for the first time. The cartridge's flat
   border was never wrong; it was never seen.
 
+### Changing a number the game sets up atomically
+
+**Symptom, three times running:** the port wrote `D_80192494` -- the radius in
+cells of the window the game simulates water in -- and the water tore, then bobbed,
+then broke outright. Each fix revealed another thing that had to move with it.
+
+`func_8004F9E0` does **six** things when a scene starts, and a port setting the
+window behind its back has to do all six or none:
+
+| # | what | where it comes from |
+|---|---|---|
+| 1 | `D_80192494` = N | a literal per scene: 16 opening, 12 one player, 10 two |
+| 2 | `D_8019249C` = `3N(N+1)+1` | **computed**, not tabled |
+| 3 | `D_80192498` = `N << 6` | **computed**, not tabled |
+| 4 | thirteen words into `D_80192460` | `D_800D4684[0 / 13 / 26]`; every word scales with N |
+| 5 | the window's shape lists | `func_8004E614`, called **only** from here |
+| 6 | the drawn mesh | a **static display list in ROM, one per size** |
+
+Missing (6) draws a 13-row list over a 33-row arena -- torn water. Missing (4)
+leaves two cell counts disagreeing -- bobbing. Missing (2) and (3) rebuilds the
+shape lists for 817 cells while every walker still stops at 469 -- broken
+outright. Each symptom is a different subset, which is why fixing them one at a
+time looked like progress and was really three passes at the same mistake.
+
+- **The mesh needs no generator up to 16.** The cartridge ships four lists and
+  the port hands over the one that matches:
+  `0x010082F0` (77 blocks, N=16), `0x0100B590` (50 blocks, N=12),
+  `0x0100D258` / `0x0100E680` (38 blocks each, N=10, the two split-screen views).
+  `Walker::water_mesh_for` substitutes the first for the second. Beyond 16 there
+  is no list, and generating one is the whole cost of going further.
+- **One player only.** Player 0's vertex arena is 823 Vtx (`GfxPool + 0x13D68`),
+  exactly 817 cells plus 6 skirt vertices; player 1's is 497, which caps a second
+  view at N=12.
+- `func_8004E614` takes no arguments -- it reads N itself -- so the port can call
+  the recompiled function directly with a copied context, the same way it calls
+  the height query. Re-implementing it would have been the wrong move.
+- **Lesson:** when a port changes one of a group of values a routine sets
+  together, find the routine and copy *all* of what it does, including what it
+  computes rather than reads. Watching for what breaks finds them one per test
+  run, and each run costs the user a race.
+
 ### Two walks over the same draw data, one of them unchecked
 
 `WaterRenderer::collectNormals` reads `data.faceIndices[start + i]` and
