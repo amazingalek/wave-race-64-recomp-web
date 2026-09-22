@@ -119,6 +119,43 @@ float waves_full_to(int cells) {
     return std::max(kSeamRadius, float(cells) * kCell);
 }
 
+// How many field samples a ring vertex is averaged from.
+//
+// The jitter that survives inside the live window is spatial, not temporal.
+// Each vertex's own height is continuous -- the field's query interpolates
+// linearly inside a cell, and the vertex slides smoothly -- but the ring's
+// neighbours are 112 units apart at the inner circle and 300 by the edge of the
+// window, against a 64-unit lattice. So adjacent vertices land on unrelated
+// parts of the surface, the mesh between them is noise rather than water, and
+// that noise re-randomises as the ring slides.
+//
+// Point-sampling a signal finer than the sample spacing is the definition of
+// aliasing, and the answer is to filter over the footprint rather than to
+// sample harder. Each vertex is averaged over the quad it represents -- a box
+// of one chord across and one band deep -- which is the same footprint filter
+// WaterPS.hlsl applies to its ripple octaves, done in world space here because
+// this is geometry rather than shading.
+//
+// Note what this is *not*: `WATER.md` has named "anchoring the ring's vertices
+// to world lattice points" as the fix since 1.0.1. Snapped positions move in
+// 64-unit steps, and the ring is paired by slot, so RT64 would interpolate
+// those steps -- the same surge across the frames in between that the game's
+// own water showed until it was given world-XZ pairing (PORTING.md §7). The
+// ring cannot have that pairing: it is keyed to the water's matrix id and the
+// ring carries its own. Filtering fixes the aliasing without touching what a
+// slot means.
+//
+// WR64_WATER_RING_TAPS=1 point-samples again, for the comparison.
+int sample_taps() {
+    static const int taps = [] {
+        const char* value = std::getenv("WR64_WATER_RING_TAPS");
+        if (value == nullptr || value[0] == 0) return 4;
+        const long parsed = std::strtol(value, nullptr, 10);
+        return parsed == 1 ? 1 : 4;
+    }();
+    return taps;
+}
+
 // ---- the far swell -------------------------------------------------------
 //
 // Past the simulated window there is no water to sample, so the sea there was
@@ -381,6 +418,7 @@ void publish(uint8_t* rdram, recomp_context* ctx, uint32_t display_list) {
                               : std::chrono::steady_clock::time_point{};
     int sampled = 0, flat = 0;
 
+    const int taps = sample_taps();
     const float ratio = std::pow(outer / kInnerRadius, 1.0f / float(circles - 1));
     float radius = kInnerRadius;
     for (int c = 0; c < circles; ++c) {
@@ -393,10 +431,16 @@ void publish(uint8_t* rdram, recomp_context* ctx, uint32_t display_list) {
         // weighed against this circle's sample spacing once, not per vertex.
         const float swell = no_swell ? 0.0f : 1.0f - waves;
         const float chord = 2.0f * radius * std::sin(3.14159265f / float(kSectors));
+        // The quad this circle's vertices stand at the corner of: one chord
+        // across, one band deep. Quarter-extents put the four taps at the
+        // midpoints of its quadrants, which is a box filter over the footprint.
+        const float half_t = chord * 0.25f;
+        const float half_r = radius * (ratio - 1.0f) * 0.25f;
         for (int s = 0; s < kSectors; ++s) {
             const float angle = (6.2831853f * float(s)) / float(kSectors);
-            const float x = cx + radius * std::cos(angle);
-            const float z = cz + radius * std::sin(angle);
+            const float ca = std::cos(angle), sa = std::sin(angle);
+            const float x = cx + radius * ca;
+            const float z = cz + radius * sa;
             Vertex& v = ring.vertices[c * kSectors + s];
             v.x = clamp_short(x);
             v.z = clamp_short(z);
@@ -405,8 +449,23 @@ void publish(uint8_t* rdram, recomp_context* ctx, uint32_t display_list) {
             // a frozen snapshot anyway.
             float y = 0.0f;
             if (waves > 0.0f) {
-                y += height_at(rdram, ctx, x, z) * waves;
-                ++sampled;
+                float height = 0.0f;
+                if (taps == 1) {
+                    height = height_at(rdram, ctx, x, z);
+                    ++sampled;
+                } else {
+                    // Radial axis is (ca, sa), tangential is (-sa, ca).
+                    for (int t = 0; t < 4; ++t) {
+                        const float dr = (t & 1) ? half_r : -half_r;
+                        const float dt = (t & 2) ? half_t : -half_t;
+                        height += height_at(rdram, ctx,
+                                            x + ca * dr - sa * dt,
+                                            z + sa * dr + ca * dt);
+                    }
+                    height *= 0.25f;
+                    sampled += 4;
+                }
+                y += height * waves;
             } else {
                 ++flat;
             }
