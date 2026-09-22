@@ -285,6 +285,59 @@ hold together racing and on the select screen; and a race at the draw distance
 then called Maximum shows no sliding at the display's rate. *All three are met; the third
 confirmed in the opening sequence, where the course-edge buoys slid.*
 
+### 09 — The two seams of the synthesised sea
+
+The port's sea extension ring (0.9.1) answered issue #12, where the sea visibly
+stopped, and introduced issue #19, a flat edge travelling with the camera. They
+are the inner and outer seam of the same added geometry, so they are one phase.
+
+What is already established, and is not to be re-derived:
+
+| fact | value | source |
+|---|---|---|
+| patch reach | 922 units, every frame | `GAME-INTERNALS.md` §*The water* |
+| patch grid | x 32, z 55-56 | same |
+| patch outline | pinned to y = 0, **100%** of outline vertices | `PORTING.md` §7 |
+| beyond the patch | the sky's haze band, 7 vertices, y = 0 | `GAME-INTERNALS.md` |
+| ring | inner 860 (fixed circle), 9 circles, 48 sectors, translucent, drawn after the patch in its own transform | `waterring.{h,cpp}` |
+| ring draws when | `modern || further` | `waterring.cpp` |
+
+1. *The negative result, recorded first.* `fit_ring_to_patch` -- moving the
+   ring's inner edge onto the patch's measured outline per sector -- was built,
+   tested and did **not** remove the edge. Written up in `PORTING.md` §7 with
+   the caveat that decides what it means. **Entry gate for step 2.**
+2. *Name the circle before changing anything.* Two camera-centred circles 62
+   units apart. Daniel drives a rough-water course; the port already carries
+   what is needed and nothing new is built for this step:
+   `WR64_WATER_RING_FIT_LOG=1` for how many of the 48 sectors the fit actually
+   moved (a low count means step 1's result is untested, not refuted),
+   `WR64_WATER_RING_DEBUG=1` to paint the ring magenta so the edge is either
+   inside it or on it, and `WR64_NO_WATER_RING=1` as the A/B.
+   **Gate: the edge is attributed to the patch's collar or to the ring, from
+   what is on screen, before any code changes.**
+3. *Fix the seam step 2 names.* If the collar: rewrite the patch's outline
+   vertices to the field height the ring already samples (`func_8004D30C`), so
+   the border stops being flat. The pinned border appears in a previous wrong
+   turn -- excluding it from interpolation history made hand-overs worse, 0.07
+   to 0.29 units at a world point -- so that same world-space measurement is run
+   before and after, because this touches the same vertices for a different
+   reason. If the ring: match its tessellation to the patch at the seam; 112-unit
+   chords read as flat whatever radius they start at.
+4. *The outer seam (issue #12).* Issue #12 was filed before the ring existed, so
+   its green and yellow lines describe the pre-ring world and may be partly
+   answered already. Re-measure in the current build first: where the sea now
+   stops, and whether what remains is the ring's own alpha fade (its outermost
+   two circles) or the sky band's edge. Only then decide what to change.
+5. *Cost.* Any per-frame work added is timed on the Iris Xe laptop and quoted as
+   the in-game number, behind the switch that turns it off.
+6. *Documentation.* Game facts to `GAME-INTERNALS.md`, port facts to
+   `PORTING.md`, `WATER.md` updated, in the same commits.
+
+**Gate:** on a rough-water course, Modern water, at Draw Distance Original *and*
+raised: no camera-centred edge in motion; issue #12's cutoff either gone or
+recorded with a measurement saying what still limits it; the hand-over jump at a
+world point no worse than before the change; frame rate unchanged on the laptop.
+
 ## Standing constraints
 
 - No ROM, asset, or ROM-derived file is ever committed. The user supplies the

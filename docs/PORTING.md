@@ -1915,6 +1915,45 @@ surge described above.
 - **Lesson:** interpolation history that rides in an optional renderer's
   payload is switched off with that renderer. Gate it on "a snapshot exists".
 
+### A flat ring of water at a fixed distance from the camera
+
+**Symptom** (issue #19): a horizontal edge of flat-looking water at a fixed
+distance ahead, travelling with the camera, on every course and worst on rough
+water. Present at Draw Distance **Original**. Absent in 0.9.0, present in 1.0.2.
+
+Two camera-centred circles are candidates, 62 units apart, and the symptom does
+not by itself say which:
+
+| | radius | what it is | flat? |
+|---|---:|---|---|
+| ring inner edge | 860 | where the port's sea extension starts, a fixed circle | 48 sectors = 112-unit chords, against the game's 32-unit grid |
+| patch outline | 922 | the game's own outermost vertex row | **yes** -- 100% of outline vertices at y = 0, against 2-11% inside |
+
+The regression window is one release: the ring was added in **0.9.1**
+(`1eb6792`), and 0.9.0 is the last build without the symptom.
+
+**Inference, not yet measured.** Before 0.9.1 everything past 922 was the sky's
+painted band, also flat at y = 0, so the patch's pinned collar blended into it
+and was invisible. The ring puts *wavy* geometry outside that collar, which
+would leave a flat annulus between wavy water inside and wavy water outside.
+
+**Wrong turn, tested and reverted:** *fitting the ring's inner edge to the patch
+outline.* `Walker::fit_ring_to_patch` measured the game's water vertices in the
+frame being drawn, binned them by direction from the ring's centre, started the
+ring at the furthest one in each sector, and collapsed the circles that fell
+inside. It removed the 860-922 overlap -- and did not remove the edge. That is
+evidence against the doubled-translucency explanation and for the collar,
+**provided the fit actually applied**: `WR64_WATER_RING_FIT_LOG=1` reports
+"ring fit: N of 48 sectors on the patch", and a low N means the mechanism never
+engaged and the overlap is untested rather than refuted. Establish N before
+concluding anything from this.
+
+- `WR64_WATER_RING_DEBUG=1` paints the ring opaque magenta: an edge *inside* the
+  magenta is the patch's collar, an edge *at* its boundary is the ring.
+- **Lesson:** geometry a port adds outside the game's own can make the game's
+  own boundary conditions visible for the first time. The cartridge's flat
+  border was never wrong; it was never seen.
+
 ### Two walks over the same draw data, one of them unchecked
 
 `WaterRenderer::collectNormals` reads `data.faceIndices[start + i]` and
