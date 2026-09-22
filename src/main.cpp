@@ -24,6 +24,7 @@
 #if defined(_WIN32)
 #   include <crtdbg.h>
 #   include <io.h>
+#   include <share.h>   // _SH_DENYNO: the log stays readable while the game runs
 #   define WIN32_LEAN_AND_MEAN
 #   include <windows.h>
 #elif defined(__APPLE__)
@@ -450,14 +451,21 @@ int main(int argc, char** argv) {
     // state transcript, the frame-rate lines and any crash report all land in
     // it. Started from a shell, or with output redirected, nothing changes.
     //
-    // The file is opened once, for stdout, and stderr is pointed at the same
-    // descriptor. Opening it a second time for stderr fails: freopen_s opens
-    // without sharing, so the second open is refused with EACCES -- and a
-    // failed freopen_s leaves the stream closed, so the port's first message
-    // to stderr then hit a closed stream, which the C runtime treats as a
-    // fatal invalid parameter (exit 0xC0000409, before the window ever opened).
-    // The redirection also happens before the console is released, while the
-    // old handles are still valid to close.
+    // The file is opened once and both streams are pointed at its descriptor.
+    // Opening it a second time for stderr fails, because it is opened without
+    // sharing -- and a failed freopen_s leaves the stream closed, so the port's
+    // first message to stderr then hit a closed stream, which the C runtime
+    // treats as a fatal invalid parameter (exit 0xC0000409, before the window
+    // ever opened). The redirection happens before the console is released,
+    // while the old handles are still valid to close.
+    //
+    // It is opened with `_fsopen(..., _SH_DENYNO)` rather than `freopen_s`
+    // precisely so that the sharing is *not* denied. freopen_s takes an
+    // exclusive lock, which means the log cannot be read while the game is
+    // running -- and a log that can only be read after the game is closed is
+    // useless for exactly the case it exists for: watching what the port
+    // reports while someone plays. This port's debug tooling is meant to work
+    // in every build, and a diagnostic that requires quitting first does not.
     {
         DWORD owners[2];
         if (GetConsoleWindow() != nullptr && GetConsoleProcessList(owners, 2) == 1) {
@@ -465,11 +473,13 @@ int main(int argc, char** argv) {
             std::error_code ec;
             std::filesystem::create_directories(log.parent_path(), ec);
             FILE* out = nullptr;
-            bool redirected = freopen_s(&out, log.string().c_str(), "w", stdout) == 0;
-            if (redirected) {
-                redirected = _dup2(_fileno(stdout), _fileno(stderr)) == 0;
-            }
-            else {
+            // Deliberately leaked: both standard streams are duplicated onto
+            // this descriptor and keep using it for the life of the process.
+            FILE* shared = _fsopen(log.string().c_str(), "w", _SH_DENYNO);
+            bool redirected = shared != nullptr &&
+                              _dup2(_fileno(shared), _fileno(stdout)) == 0 &&
+                              _dup2(_fileno(shared), _fileno(stderr)) == 0;
+            if (!redirected) {
                 // Keep both streams valid whatever happens; output is lost, the
                 // game is not.
                 freopen_s(&out, "NUL", "w", stdout);

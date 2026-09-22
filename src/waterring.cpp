@@ -208,6 +208,43 @@ int sample_taps() {
     return taps;
 }
 
+// Undoes the normalisation in the game's own height query.
+//
+// `func_8004D30C` does not return a height. It returns the plane's constant
+// divided by the length of the plane's normal:
+//
+//     (4096 H - d0 fu - d1 fv) / (64 sqrt(d0^2 + d1^2 + 4096))
+//
+// and since the surface's world gradient is `|grad h| = sqrt(d0^2+d1^2)/64`,
+// that is exactly `height / sqrt(1 + |grad h|^2)`. On flat water the divisor
+// cancels to one, which is why every still-water check agreed and this went
+// unnoticed; on a slope the port's heights come back **low, by 0.6% typically
+// and up to 15% on the steepest** (GAME-INTERNALS.md, *The wave field*).
+//
+// `d0` and `d1` are internal to the function, but they do not have to be known.
+// The *returned* surface has gradient `g' = g / s` with the same `s`, so
+// measuring `g'` inverts it: `g = g'/sqrt(1-g'^2)` and `s = 1/sqrt(1-g'^2)`.
+// The four filter taps already straddle the vertex on two perpendicular axes,
+// about a lattice cell apart, so the gradient costs no extra samples at all.
+//
+// Clamped because `g'` approaching 1 is a vertical surface, which this field
+// never holds and which would divide by nothing.
+//
+// Note this correction belongs *here* and not in src/waterfield.cpp, whose
+// height_at feeds probe CSVs that tools/decode_water_field.py checks against
+// its own reproduction of the game's function -- there the raw, unnormalised
+// answer is precisely what is being compared.
+//
+// WR64_WATER_RING_RAW_HEIGHT=1 leaves the heights as the game returns them.
+float slope_correction(const float tap[4], float half_r, float half_t) {
+    static const bool raw = std::getenv("WR64_WATER_RING_RAW_HEIGHT") != nullptr;
+    if (raw || half_r <= 0.0f || half_t <= 0.0f) return 1.0f;
+    const float gr = ((tap[1] + tap[3]) - (tap[0] + tap[2])) / (4.0f * half_r);
+    const float gt = ((tap[2] + tap[3]) - (tap[0] + tap[1])) / (4.0f * half_t);
+    const float g2 = std::min(gr * gr + gt * gt, 0.9f);
+    return 1.0f / std::sqrt(1.0f - g2);
+}
+
 // ---- the far swell -------------------------------------------------------
 //
 // Past the simulated window there is no water to sample, so the sea there was
@@ -662,14 +699,16 @@ void publish(uint8_t* rdram, recomp_context* ctx, uint32_t display_list) {
                     ++sampled;
                 } else {
                     // Radial axis is (ca, sa), tangential is (-sa, ca).
+                    float tap[4];
                     for (int t = 0; t < 4; ++t) {
                         const float dr = (t & 1) ? half_r : -half_r;
                         const float dt = (t & 2) ? half_t : -half_t;
-                        height += height_at(rdram, ctx,
-                                            x + ca * dr - sa * dt,
-                                            z + sa * dr + ca * dt);
+                        tap[t] = height_at(rdram, ctx,
+                                           x + ca * dr - sa * dt,
+                                           z + sa * dr + ca * dt);
                     }
-                    height *= 0.25f;
+                    height = (tap[0] + tap[1] + tap[2] + tap[3]) * 0.25f;
+                    height *= slope_correction(tap, half_r, half_t);
                     sampled += 4;
                 }
                 y += height * waves;

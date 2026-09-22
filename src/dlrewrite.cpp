@@ -1777,7 +1777,26 @@ struct Walker {
         using wr64::waterring::kSectors;
         using wr64::waterring::kCircles;
 
+        // Painting the ring magenta means painting its *vertex shade*, and the
+        // modern water shader computes its own colour and never reads that --
+        // so this did nothing at the quality it would actually be used at, and
+        // said nothing about it either. It now reports that once, because a
+        // diagnostic that silently does nothing is worse than no diagnostic:
+        // "the ring is not drawn" and "the ring is drawn and shaded like the
+        // sea" look identical, which is exactly what it exists to tell apart.
+        // At Original the vertex shade is the colour, and it works.
         static const bool ring_debug = std::getenv("WR64_WATER_RING_DEBUG") != nullptr;
+        if (ring_debug) {
+            static bool warned = false;
+            if (!warned && wr64::water::quality() != wr64::water::Quality::Original) {
+                warned = true;
+                std::fprintf(stderr,
+                             "[water] WR64_WATER_RING_DEBUG paints the ring's vertex shade,"
+                             " which the modern water shader ignores. Set Water Quality to"
+                             " Original to see it, or use F10's diagnostic views.\n");
+                std::fflush(stderr);
+            }
+        }
 
         // What the game's own water looks like, read out of the frame being
         // drawn. The fallbacks are what a trace of Sunny Beach measured, used
