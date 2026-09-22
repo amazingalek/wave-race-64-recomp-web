@@ -338,6 +338,101 @@ raised: no camera-centred edge in motion; issue #12's cutoff either gone or
 recorded with a measurement saying what still limits it; the hand-over jump at a
 world point no worse than before the change; frame rate unchanged on the laptop.
 
+### 10 — The far sea: stop sampling water the game is not simulating
+
+Phase 09 assumed the ring extends the game's swell. It does not, and the
+measurement that says so reorganises the rest of this work.
+
+**The game simulates water in a hexagon around the camera and nowhere else.**
+`func_80050F8C` re-centres a fixed cell window on the camera every frame, one
+lattice cell at a time, and `func_8004EAA4` integrates only that window. The
+per-scene parameter block `D_800D4684` holds its size as a hexagon cell count,
+`3N(N+1)+1`:
+
+| scene | N | cells | word | live radius (edge → corner) |
+|---|---:|---:|---|---|
+| opening / rider select | 16 | 817 | `0x331` | 886 → 1024 |
+| **1P race** | **12** | **469** | `0x1D5` | **665 → 768** |
+| 2P race | 10 | 331 | `0x14B` | 554 → 640 |
+
+For N = 12 the window is 24 × 24 cells = **1536 × 1330** world units, which is
+this project's own measured patch extent to the unit. **The drawn patch is the
+simulated hexagon**, and the patch's outline being 100% pinned to y = 0 is that
+window's boundary ring — the open question phase 09 step 2 was gated on.
+
+Outside the hexagon the array is not simulated at all. It holds whatever was
+last stamped into it: the per-course wave-generator lines (`D_801BFA48`, ≤ 8
+line segments driven by `func_8006E3A8`, which *do* oscillate), craft wakes left
+behind, and zeros. Measured on a captured Dolphin Park field: **84% of entries
+have a nonzero height, but only 27.7% have ever been stepped.** Roughly seventy
+per cent of what the ring samples is a frozen snapshot.
+
+Two further facts bound the approach:
+
+- **The array aliases at 14,190 units.** 384 × 128 entries cover a 384 × 384
+  cell wrap period, so exactly three world cells share every entry; the nearest
+  repeat is 14,190 units away. `kMaxOuter` is **16,192**, so the outer ring reads
+  the water from 12 km away as if it were local.
+- **48 sectors never resolve the lattice.** Resolving a 128-unit minimum
+  wavelength needs a chord ≤ 64, i.e. radius ≤ 489. The ring starts at 860.
+  Measured, adjacent ring samples are essentially independent draws past ~2,500
+  units.
+
+So the far sea's shimmer is the ring's sampling pattern sliding over frozen,
+spatially decorrelated data — not waves moving. It cannot be tuned away, because
+there is nothing out there to sample correctly.
+
+1. *Stop sampling dead water.* Sample the field only where it is live — the
+   hexagon plus a margin — and hard-cap any sampling radius below the 14,190-unit
+   alias. Beyond the live window the ring carries no field-derived height at all.
+   **Gate: the far sea is stable in motion on a rough course, with the band count
+   at 9 and at 13.**
+2. *Anchor the ring's vertices to world lattice points.* `WATER.md` has named
+   this as the fix since 1.0.1 and it has never been made. A camera-centred ring
+   re-samples every vertex every frame; a world-anchored one changes only when
+   the camera crosses a lattice step, exactly as the game's own window does.
+   Note what it costs: slot *i* stops meaning a fixed point, and the ring is
+   interpolated **by index** (`rt64_game_frame.cpp:1192`, generic path — the
+   world-XZ path is keyed to `kWaterId` and the ring is `kRingId`). Either the
+   ring moves to world-XZ pairing or it re-uses slots in lattice order.
+3. *Synthesise the far swell rather than sampling it.* The field can supply its
+   **statistics** — dominant wavelength ≈ 900–1,150 units, correlation length
+   450–500, amplitude p50 **3** and p90 **9** world units — and its phase at the
+   seam, but not its animation. A cheap world-anchored procedural swell with
+   those statistics is temporally coherent by construction, which is the property
+   the sampled field cannot have out there. **This is the "look" half.**
+4. *Budget amplitude against row stacking, not radius.* The current taper is
+   keyed to radius, but the binding constraint is the geometric ratio `k`: the
+   fold budget is `(k−1)/(k+1)` and the jitter-to-row-gap ratio is `k/(k−1)`,
+   both independent of radius. That is why 9 → 13 circles reintroduced the
+   shimmer with the taper unchanged, and why 1800/5000 are a 9-circle
+   calibration in disguise. Cap amplitude at `margin · h · (k−1) / ((k+1) · A)`.
+5. *Performance, measured on the laptop for the first time.* `WR64_WATER_PROFILE`
+   writes per-pass GPU timings and is in the tree, undocumented; no GPU cost
+   measurement of this renderer exists on the Iris Xe. Then the free wins:
+   `WaterFieldCS` dispatches all four craft tiles even when a tile has no craft
+   (**up to 75% of the field pass** in single-craft modes), and the surface pass
+   rasterises the whole sea into a texture that nothing samples unless spray is
+   on at Best. **Gate: a before/after GPU number, not a frame-rate observation —
+   the 20 fps metric saturates.**
+6. *Correctness already recorded and unfixed.* `func_8004D30C` returns the
+   plane constant over its normal's length, not a height; callers must multiply
+   by `sqrt(d0²+d1²+1)`. `waterring.cpp` and `waterfield.cpp` do not, so heights
+   are low by ~0.6% typically and up to 15% on the steepest slopes. Also: the
+   split-screen second view gets no ring at all (`claim()` erases through the
+   match), the vertex-scratch overflow path returns without logging *and* costs
+   the ring a frame of interpolation, and the int16 vertex clamp is reachable now
+   that `outer` is 16,192.
+7. *Documentation.* Game facts to `GAME-INTERNALS.md` — the velocity field (entry
+   +2 is a signed velocity, not an "age"), the hexagon window, the generators,
+   the alias. Port facts to `PORTING.md`. `WATER.md`'s ring size, cost figures and
+   switch table are all stale.
+
+**Gate:** far water stable in motion at both band counts and both draw
+distances; the sea still reaches the far plane; a GPU before/after on the Iris Xe
+for every performance change; the hand-over jump at a world point no worse than
+before; and `WATER.md` agreeing with the code.
+
 ## Standing constraints
 
 - No ROM, asset, or ROM-derived file is ever committed. The user supplies the

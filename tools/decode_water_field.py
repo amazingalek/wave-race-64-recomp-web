@@ -9,7 +9,7 @@ this is that arithmetic rewritten in Python:
     row = ((v >> 6) + ((u >> 6) & ~0x7F) + 0x600) % 384
     col =  (u >> 6) & 0x7F
 
-    D_80162420[row * 128 + col] = { s16 height, s16 age }
+    D_80162420[row * 128 + col] = { s16 height, s16 velocity }
 
 384 rows x 128 columns x 4 bytes is 192 KiB, which puts the array's end at
 exactly 0x80192420 -- the address func_80050204's split-screen test reads, and
@@ -137,7 +137,7 @@ def height_at(heights, x: float, z: float, water_level: float = 0.0) -> float:
 
 
 def load_field(path: Path):
-    """The field as two ROWS x COLS lists: heights in world units, and ages.
+    """The field as two ROWS x COLS lists: heights in world units, and velocities.
 
     RDRAM is stored as host-endian 32-bit words, so within each 4-byte entry the
     two halfwords are swapped relative to the cartridge's big-endian layout --
@@ -150,13 +150,13 @@ def load_field(path: Path):
         sys.exit(f"{path}: expected {expected} bytes, got {len(raw)}")
 
     heights = [[0] * COLS for _ in range(ROWS)]
-    ages = [[0] * COLS for _ in range(ROWS)]
+    velocities = [[0] * COLS for _ in range(ROWS)]
     for i in range(ROWS * COLS):
-        age, height = struct.unpack_from("<hh", raw, i * 4)
+        velocity, height = struct.unpack_from("<hh", raw, i * 4)
         # Python's >> on a negative int floors, which is what MIPS sra does.
         heights[i // COLS][i % COLS] = height >> HEIGHT_SHIFT
-        ages[i // COLS][i % COLS] = age
-    return heights, ages
+        velocities[i // COLS][i % COLS] = velocity
+    return heights, velocities
 
 
 def read_meta(path: Path):
@@ -169,19 +169,19 @@ def read_meta(path: Path):
     return meta
 
 
-def describe_field(heights, ages):
+def describe_field(heights, velocities):
     flat = [h for row in heights for h in row]
     nonzero = [h for h in flat if h != 0.0]
-    aged = [a for row in ages for a in row if a != 0]
+    moving = [v for row in velocities for v in row if v != 0]
     print("--- the field ---")
     print(f"  cells            {len(flat)}  ({ROWS} rows x {COLS} cols, {CELL}-unit cells)")
     print(f"  disturbed        {len(nonzero)}  ({100.0 * len(nonzero) / len(flat):.1f}%)")
     if nonzero:
         print(f"  height range     {min(nonzero):+d} .. {max(nonzero):+d} world units")
         print(f"  mean |height|    {sum(abs(h) for h in nonzero) / len(nonzero):.2f}")
-    print(f"  nonzero age      {len(aged)}")
-    if aged:
-        print(f"  age range        {min(aged)} .. {max(aged)}")
+    print(f"  nonzero velocity {len(moving)}   (cells the simulation has stepped)")
+    if moving:
+        print(f"  velocity range   {min(moving)} .. {max(moving)}   (1/256 world unit a tick)")
     print(f"  world period     u {WRAP} units, v {WRAP} units")
     print(f"  column span      {COLS * CELL} units of u before the row folds")
 
@@ -271,14 +271,14 @@ def main():
     args = parser.parse_args()
 
     base = Path(args.prefix)
-    heights, ages = load_field(Path(str(base) + "-field.bin"))
+    heights, velocities = load_field(Path(str(base) + "-field.bin"))
     meta = read_meta(Path(str(base) + "-meta.txt"))
 
     water_level = float(meta.get("water_level", 0))
     print(f"--- meta ---\n  course {meta.get('course','?')}, tick {meta.get('tick','?')}, "
           f"gWaterLevel {water_level:.0f}")
 
-    describe_field(heights, ages)
+    describe_field(heights, velocities)
     # The readers floor to whole units, so the tolerance is rounding, not 1/256.
     ok = check_probes(Path(str(base) + "-probe.csv"), heights, water_level, 0.01)
 

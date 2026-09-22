@@ -668,7 +668,7 @@ it.
 | | |
 |---|---|
 | Array | `D_80162420`, at `0x80162420` |
-| Shape | **384 rows x 128 columns**, entries of `{ s16 height, s16 age }` |
+| Shape | **384 rows x 128 columns**, entries of `{ s16 height, s16 velocity }` |
 | Size | 196,608 bytes, so it ends at exactly `0x80192420` |
 | Cell | 64 world units, on a **triangular** (oblique) lattice |
 | Height | the s16 at entry offset 0, used as **`s16 >> 8`** -- whole world units, floored |
@@ -677,6 +677,94 @@ it.
 That the array ends exactly where `func_80050204`'s split-screen test reads
 (`0x80192420`), with `gWaterLevel` immediately after at `0x80192458`, is the
 first confirmation the shape is right.
+
+#### Entry + 2 is a velocity, and the field is a wave simulation
+
+It was called an "age" here, and in `tools/decode_water_field.py`, on the
+strength of nothing. `func_8004EAA4` is a damped coupled-oscillator integrator,
+and the second halfword is its state. Per neighbour pair, from the asm
+(`func_8004EAA4.s`, `0x8004EB20`-`0x8004EB5C`):
+
+```
+mean = (A.h + B.h) >> D_800D4724        diff = (B.h - A.h) >> D_800D472C
+A.v += diff - mean                      B.v -= diff + mean
+```
+
+then per cell, `C.h += C.v` and `C.v -= C.v >> D_800D4730`. `mean` restores
+toward sea level, `diff` couples neighbours, the last shift is loss. The step
+creates no energy: all of it is stamped in from outside (below). Measured
+velocities on a captured field run **-2502 to +2781** raw, which is the plainest
+argument against "age" -- and `h += v` at 1/256 of a world unit means a typical
+cell's *visible* height (`>> 8`) steps about once every 1.2 ticks.
+
+The three shifts are chosen by scene, not by course (`func_8004F9E0.s:41-92`);
+damping shift 6 gives an e-folding time of ~64 ticks, about **3.2 s** at the
+race's 20 Hz.
+
+#### The simulated window is a hexagon around the camera
+
+`func_80050F8C` re-centres the window every frame: it converts the camera to
+lattice coordinates, rounds to the **nearest** cell (`(u + 0x20) >> 6`), and
+rebuilds the offset list the integrator walks. So the re-centring quantum is one
+lattice cell -- **64 units in x, or (-32, +55.43)** -- which is exactly the mesh
+grid measured above, and exactly the carry steps measured in the lattice trace.
+"64-unit steps" elsewhere in these documents is imprecise.
+
+The window's size is a hexagon cell count, `3N(N+1)+1`, in the per-scene
+parameter block at `D_800D4684`:
+
+| scene | N | cells | word | live radius (edge → corner) |
+|---|---:|---:|---|---|
+| opening / rider select | 16 | 817 | `0x331` | 886 → 1024 |
+| **1P race** | **12** | **469** | `0x1D5` | **665 → 768** |
+| 2P race | 10 | 331 | `0x14B` | 554 → 640 |
+
+For N = 12 that is 24 x 24 cells = **1536 x 1330** world units -- the patch
+extent measured from display lists, to the unit. **The drawn patch is the
+simulated hexagon.** That also explains why 100% of the patch's outline vertices
+sit at y = 0 while only 2-11% inside do: the outline is the window's own
+boundary ring, which the pair-stepping never fully drives.
+
+#### Where the energy comes from
+
+A course loads up to **eight wave-generator line segments** into `D_801BFA48`
+(`0x24` per entry, count in `D_801BFB68`, loaded by `func_80071E70`).
+`func_8006E3A8` drives them every tick: amplitude x `sin(2*pi * tick / period)`,
+or a constant when the oscillate flag is zero. `func_8004F520` walks each line
+and **hard-sets all three corners** of the containing triangle, zeroing their
+velocity. So a course's swell -- its amplitude, direction and period -- is data
+per course, not a global setting.
+
+#### What the field holds outside the window
+
+Nothing simulates it. Outside the hexagon a cell keeps whatever was last stamped
+there -- a generator line, a craft wake, or zero -- until the window returns.
+Measured on a captured Dolphin Park field: **84.0% of entries have a nonzero
+height, but only 27.7% have a nonzero velocity**, i.e. have ever been stepped.
+Heights run -29 to +58 world units, with p50 **3** and p90 **9** over the
+nonzero entries; the large values are stamped generator lines and craft wakes,
+not ordinary swell.
+
+Spatially, pooled autocorrelation puts the **dominant wavelength at ~900-1,150
+units** with a correlation length of **450-500**. The lattice pitch is 64, so the
+shortest representable wavelength is **128 units**.
+
+#### The array aliases at 14,190 units
+
+384 x 128 entries cover a 384 x 384 cell wrap period, so **exactly three world
+cells share every entry**. The alias generators and their world offsets:
+
+| (dcu, dcv) | (dx, dz) | distance |
+|---|---|---:|
+| **(+128, -128)** | **(+12288, -7094)** | **14,189** |
+| (+384, 0) | (+24576, 0) | 24,576 |
+| (0, +384) | (-12288, +21284) | 24,576 |
+
+A course fits inside one alias cell. Anything sampling further does not: at
+14,190 units the query returns the water under the boat. `func_8004D30C` itself
+is **total** -- no bounds check, no clamp, no validity test, and the modulo and
+mask make every index reachable and in range for any finite x and z -- so
+sampling far away is safe, but it is a wrap, not an extrapolation.
 
 **The indexing**, read out of `func_8004D30C` at `0x8004D30C`-`0x8004D3FC` and
 matching the decompiled `func_8004F3D4` exactly:
