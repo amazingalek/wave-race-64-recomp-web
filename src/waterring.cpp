@@ -45,6 +45,12 @@ constexpr uint32_t kCameraZ = 0x54;
 constexpr uint32_t kWindowRadius = 0x00192494;
 constexpr float kCell = 64.0f;   // world units a lattice cell
 
+// `D_800D4B00`, the frame counter. It is incremented once a frame and it is
+// what the game's own wave generators take their phase from
+// (`func_8006E3A8`: `D_800D4B00 % period`), so a swell driven by it shares a
+// clock with the cartridge's waves rather than running on one of its own.
+constexpr uint32_t kFrameCounter = 0x000D4B00;
+
 // The game's own drawn reach, from GAME-INTERNALS.md. The ring must carry full
 // amplitude at least this far or it meets the patch's live waves with damped
 // ones, which is a seam of its own.
@@ -111,6 +117,70 @@ constexpr float kMaxOuter = 16192.0f;
 // the patch's live waves with damped ones.
 float waves_full_to(int cells) {
     return std::max(kSeamRadius, float(cells) * kCell);
+}
+
+// ---- the far swell -------------------------------------------------------
+//
+// Past the simulated window there is no water to sample, so the sea there was
+// left flat. Flat is honest and it is what the cartridge shows, but it is also
+// the thing a player notices: the sea stops having weather halfway to the
+// horizon.
+//
+// So it is synthesised instead of sampled. Three crossing sine components,
+// evaluated at the vertex's **world** position -- not the camera's -- so the
+// surface stands still while the ring slides through it, which is the property
+// the sampled field could not have out there. Their phase comes from the game's
+// own frame counter, so they keep time with the cartridge's waves.
+//
+// Amplitudes come from the field's own statistics rather than taste: over a
+// captured Dolphin Park field the height is 3 world units at the median and 9 at
+// the 90th percentile, so a little under four units of total swell is the right
+// order. That is also small enough to sidestep the row-folding limit that made
+// thirteen circles jitter -- a band folds over the one behind it when the
+// amplitude approaches `h (k-1)/(k+1)`, about 12 units at this camera height.
+//
+// **Each component fades out by its own footprint.** The ring samples at
+// `chord = 0.1308 r`, so a component of wavelength L is resolved while
+// `chord < L/6` and aliases after; fading it out there is the same trick
+// WaterPS.hlsl already uses on its ripple octaves. The shortest component is
+// gone by ~2,300 units and the longest by ~7,600, past which the sea is a strip
+// a few pixels tall and flat is the correct answer.
+//
+// WR64_WATER_RING_NO_SWELL=1 leaves the far sea flat again, for the comparison.
+struct Swell {
+    float amplitude;    // world units
+    float wavelength;   // world units
+    float dx, dz;       // unit direction of travel
+    float period;       // frames for a full cycle
+};
+
+constexpr Swell kSwell[] = {
+    { 2.0f, 6000.0f,  0.94f,  0.34f, 190.0f },
+    { 1.2f, 3400.0f, -0.42f,  0.91f, 130.0f },
+    { 0.8f, 1800.0f,  0.71f, -0.71f,  90.0f },
+};
+
+// How much of a component survives at a given sample spacing: full while the
+// chord resolves it, nothing once it cannot.
+float footprint_fade(float chord, float wavelength) {
+    const float full = wavelength / 8.0f;
+    const float gone = wavelength / 4.0f;
+    if (chord <= full) return 1.0f;
+    if (chord >= gone) return 0.0f;
+    const float t = (chord - full) / (gone - full);
+    return 1.0f - t * t * (3.0f - 2.0f * t);
+}
+
+float far_swell(float x, float z, float frame, float chord) {
+    float y = 0.0f;
+    for (const Swell& s : kSwell) {
+        const float fade = footprint_fade(chord, s.wavelength);
+        if (fade <= 0.0f) continue;
+        const float along = (x * s.dx + z * s.dz) / s.wavelength;
+        const float phase = 6.2831853f * (along - frame / s.period);
+        y += s.amplitude * std::sin(phase) * fade;
+    }
+    return y;
 }
 
 // How many circles a ring lays out, 2 to kCircles.
@@ -257,6 +327,13 @@ void publish(uint8_t* rdram, recomp_context* ctx, uint32_t display_list) {
     ring.cx = cx;
     ring.cz = cz;
 
+    // The game's frame counter drives the far swell's phase. It is an s32 that
+    // only grows, and a float loses whole numbers past 2^24, so it is folded
+    // into the swell's own cycle first -- the components' periods multiply out
+    // to a cycle far shorter than that, and the fold is exact in integers.
+    static const bool no_swell = std::getenv("WR64_WATER_RING_NO_SWELL") != nullptr;
+    const uint32_t frame = read_word(rdram, kFrameCounter) % 222300u;  // 190*130*9
+
     // Radii grow geometrically, so each band covers more ground than the one
     // inside it for the same number of vertices. That is where the cost belongs:
     // a band at 5,000 units is a few pixels tall on the screen.
@@ -311,6 +388,11 @@ void publish(uint8_t* rdram, recomp_context* ctx, uint32_t display_list) {
         // One circle is one radius, so the wave damping is decided once a band
         // rather than once a vertex.
         const float waves = wave_scale(radius, full_to);
+        // The synthesised swell takes over exactly as the sampled field lets
+        // go, so the two never both carry the same wave. Its components are
+        // weighed against this circle's sample spacing once, not per vertex.
+        const float swell = no_swell ? 0.0f : 1.0f - waves;
+        const float chord = 2.0f * radius * std::sin(3.14159265f / float(kSectors));
         for (int s = 0; s < kSectors; ++s) {
             const float angle = (6.2831853f * float(s)) / float(kSectors);
             const float x = cx + radius * std::cos(angle);
@@ -318,16 +400,20 @@ void publish(uint8_t* rdram, recomp_context* ctx, uint32_t display_list) {
             Vertex& v = ring.vertices[c * kSectors + s];
             v.x = clamp_short(x);
             v.z = clamp_short(z);
-            // Past the damping the field is not sampled at all: the height is
-            // water level, and the game's own query is the expensive part of
-            // this loop.
+            // Past the window the field is not sampled at all -- the game's own
+            // query is what this loop costs, and out there it would answer with
+            // a frozen snapshot anyway.
+            float y = 0.0f;
             if (waves > 0.0f) {
-                v.y = clamp_short(height_at(rdram, ctx, x, z) * waves);
+                y += height_at(rdram, ctx, x, z) * waves;
                 ++sampled;
             } else {
-                v.y = 0;
                 ++flat;
             }
+            if (swell > 0.0f) {
+                y += far_swell(x, z, float(frame), chord) * swell;
+            }
+            v.y = clamp_short(y);
         }
         radius *= ratio;
     }
