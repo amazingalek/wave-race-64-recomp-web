@@ -53,11 +53,18 @@ namespace wr64::waterring {
 // Twenty-four was tried first and the join showed.
 constexpr int kSectors = 48;
 
-// Radii, including the inner edge. Eight bands of quads between nine circles,
-// spaced so they grow with distance: the far bands cover far more ground for
-// the same vertex count, which is where the cost has to go. The outermost two
-// fade out, so the ring meets the sky's painted sea rather than ending at it.
-constexpr int kCircles = 9;
+// Radii, including the inner edge: bands of quads between circles, spaced so
+// they grow with distance, because a band at 5,000 units is a few pixels tall
+// and the cost belongs further in. The outermost fades out, so the ring meets
+// the sky's painted sea rather than ending at it.
+//
+// This is the **most** circles a ring can have, and sizes the arrays below.
+// Nine was the original, which over the far plane's 16,192 units put the outer
+// bands 3,400 and 5,000 units deep; thirteen keeps the same geometric spacing
+// but lands more of the circles where the sea is actually drawn. The count a
+// frame really uses is `Ring::circles`, so it can be turned back down without
+// rebuilding -- see `WR64_WATER_RING_BANDS`.
+constexpr int kCircles = 13;
 
 constexpr int kVertexCount = kSectors * kCircles;
 
@@ -74,6 +81,16 @@ struct Ring {
     // it drew without recomputing it.
     float inner;
     float outer;
+    // The centre the circles are drawn around (the camera) and each circle's
+    // radius, so the rewriter can move the inner edge onto the patch's own
+    // outline without guessing where the other circles are.
+    float cx, cz;
+    float radius[kCircles];
+    // How many of those circles this ring actually uses, 2 to kCircles. The
+    // emitter draws `circles - 1` bands and fades the last one, so a ring is
+    // described entirely by this and the radii above; nothing downstream reads
+    // kCircles to decide what was laid out.
+    int circles;
 };
 
 // Claimed by the display-list rewriter on the graphics thread, by the same list

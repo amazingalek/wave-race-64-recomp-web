@@ -749,6 +749,27 @@ Spatially, pooled autocorrelation puts the **dominant wavelength at ~900-1,150
 units** with a correlation length of **450-500**. The lattice pitch is 64, so the
 shortest representable wavelength is **128 units**.
 
+#### How fast the camera crosses it
+
+Measured at the water ring's centre (`WR64_WATER_RING_COST=1`), which reads the
+same camera the window is re-centred on:
+
+| | mean units a frame | peak |
+|---|---:|---:|
+| menus, slow sections | 0.4 - 30 | 3.7 - 46 |
+| **racing** | **48 - 57** | **63 - 65** |
+
+At 20 Hz that is roughly 1,000 world units a second, and **the peak is one
+lattice cell**: at racing speed the simulated window advances very nearly one
+cell per frame, which is why the mesh's carry steps measure as multiples of 32
+and 64. Earlier notes here said the camera "moves a few units a frame"; that was
+wrong, and it made the lattice step look like a rounding artefact rather than
+the window doing exactly what it is built to do.
+
+It also bounds any scheme that samples the field on camera-carried geometry: a
+vertex slides ~50 units a frame through a 64-unit lattice, so it lands in a
+different cell nearly every frame.
+
 #### The array aliases at 14,190 units
 
 384 x 128 entries cover a 384 x 384 cell wrap period, so **exactly three world

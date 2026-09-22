@@ -148,17 +148,27 @@ constexpr uint32_t kMatrixScratchSize = 0x1000u;   // 64 matrices
 
 // And where the water ring's vertices go, past the matrices.
 //
-// Size it from the ring, not by feel. A Vtx is 16 bytes; the ring emits each of
-// its bands in chunks of at most 32 vertices that overlap by a column, so 48
-// sectors takes four chunks a band and eight bands take 1,024 vertex slots --
-// 16 KB. The first version of this reserved 8 KB, which is exactly half, and
-// the emitter would have run out at the fourth band and silently stopped: the
-// ring would have been drawn with its outer half missing and the log would
-// still have said it was drawn. 32 KB leaves room for a denser ring without
-// this becoming a trap again. Two views of a split screen each get their own,
-// and the cursor restarts every frame.
+// Size it from the ring, not by feel, and size it for **two** rings: the two
+// views of a split screen each get their own, and the cursor restarts only once
+// a frame.
+//
+// A Vtx is 16 bytes. A band is emitted in chunks of at most 16 columns that
+// overlap by one, so 48 sectors closing the seam (49 columns) takes chunks of
+// 16, 16, 16 and 4 columns -- 104 vertices a band. The arithmetic that matters:
+//
+//   | circles | bands | vertices / ring | bytes / ring | two views |
+//   |--------:|------:|----------------:|-------------:|----------:|
+//   |       9 |     8 |             832 |       13,312 |    26,624 |
+//   |      13 |    12 |           1,248 |       19,968 |    39,936 |
+//
+// So 32 KB held nine circles in two players with 6 KB to spare, and thirteen
+// overruns it by 7 KB. `water_ring` answers an overrun by returning, which draws
+// the ring with its outer bands missing and logs nothing -- the same trap the
+// first 8 KB version set, one ring size later. 64 KB carries thirteen circles in
+// two players with 25 KB spare, and the megabyte at kScratch is nowhere near
+// full: this still ends at 0x80751000, well inside it.
 constexpr uint32_t kVertexScratch = kMatrixScratch + kMatrixScratchSize;
-constexpr uint32_t kVertexScratchSize = 0x8000u;
+constexpr uint32_t kVertexScratchSize = 0x10000u;
 
 // The microcode this game runs is not stock F3D. RT64 carries a variant for it
 // -- lib/RT64/src/gbi/rt64_gbi_f3dwave.cpp -- and these are that variant's own
@@ -1431,8 +1441,13 @@ struct Walker {
     // than being resampled from a world-fixed field.
     //
     // What is wrong is the positions. The step is a multiple of 32 world units
-    // -- 64, 32, 96, 128 -- while the camera moves a few units a frame: these
-    // are the camera's coordinates rounded, not where the surface is.
+    // -- 64, 32, 96, 128 -- because the game re-centres its simulation window
+    // one lattice cell at a time (func_80050F8C, rounding to the nearest cell):
+    // these are the camera's coordinates snapped to the lattice, not where the
+    // surface is. "The camera moves a few units a frame", which this used to
+    // say, is wrong and made the step look like an artefact -- measured at the
+    // ring's centre it is 48 to 57 units a frame while racing, peaking at 63 to
+    // 65, i.e. very nearly one 64-unit cell a frame.
     // Interpolating between two of them surges the whole surface 64 units
     // across the frames in between, in the 31% of race frames that carry. The
     // heights and texture coordinates are worth interpolating and the
@@ -1609,6 +1624,115 @@ struct Walker {
     }
     bool ring_transform_open = false;
 
+    // Moves the ring's inner edge onto the outline of the game's own patch.
+    //
+    // The ring used to start on a fixed circle 860 units from the camera, inside
+    // the patch's 922-unit reach, on the assumption that the patch "covers the
+    // overlap". It does not: the ring is translucent and drawn after the patch,
+    // so wherever the two overlap the sea is drawn twice, and the circle's
+    // straight chords -- about 110 units long, flat between samples -- cut
+    // across the patch's troughs as a hard edge that travels with the camera.
+    // On rough water that is a second water plane a short way ahead (issue #19).
+    //
+    // So the patch is measured in the frame being drawn: every vertex of the
+    // game's water list, binned by its direction from the ring's centre, and the
+    // furthest one in each sector is where the ring starts in that direction. The
+    // patch pins its outline to water level (docs/PORTING.md, *Pinned patch
+    // border*), so the new inner vertex is put at y = 0 to meet it. Circles that
+    // fall inside the patch collapse onto the inner vertex, leaving degenerate
+    // quads rather than water drawn over water. Sectors the patch does not
+    // reach keep the fixed circle. Rounding the outline outward rather than
+    // inward means a sliver of the sky's painted sea at y = 0 may show between
+    // them instead of a doubled layer -- which is what every release before
+    // 0.9.1 showed along the whole edge.
+    //
+    // **Off by default, and it should stay off.** Measured with
+    // WR64_WATER_RING_FIT_LOG, the scan finds the patch on about one frame in
+    // twenty: a typical frame fits 11 to 18 of the 48 sectors, the fitted arc
+    // rotates from frame to frame, and the partial frames report a reach of
+    // 2,500 to 3,600 where the patch is at 922. A sector's inner vertex
+    // therefore moves by up to 2,700 units between frames, and the ring is
+    // interpolated by slot, so RT64 is handed that as a velocity. See
+    // docs/PORTING.md, *A flat ring of water at a fixed distance from the
+    // camera*.
+    //
+    // It is kept because the idea is sound and only the per-frame rescan is
+    // not -- the patch's reach is recorded as identical in every frame, so a
+    // retry should measure the outline once and cache it per course.
+    // WR64_WATER_RING_FIT=1 turns it on for that work.
+    void fit_ring_to_patch(wr64::waterring::Ring& ring, uint32_t list_physical) {
+        using wr64::waterring::kSectors;
+        using wr64::waterring::kCircles;
+        static const bool fit = std::getenv("WR64_WATER_RING_FIT") != nullptr;
+        static const bool log = std::getenv("WR64_WATER_RING_FIT_LOG") != nullptr;
+        if (!fit) return;
+
+        float reach[kSectors] = {};
+        collect_patch_reach(list_physical, 0, ring.cx, ring.cz, reach);
+
+        const float step = 6.2831853f / float(kSectors);
+        int fitted = 0;
+        for (int s = 0; s < kSectors; ++s) {
+            if (reach[s] <= 0.0f) continue;
+            ++fitted;
+            const float angle = step * float(s);
+            auto& inner = ring.vertices[s];
+            inner.x = int16_t(std::lround(ring.cx + reach[s] * std::cos(angle)));
+            inner.z = int16_t(std::lround(ring.cz + reach[s] * std::sin(angle)));
+            inner.y = 0;
+            for (int c = 1; c < kCircles; ++c) {
+                if (ring.radius[c] > reach[s]) break;
+                ring.vertices[c * kSectors + s] = inner;
+            }
+        }
+
+        if (log) {
+            static int frames = 0;
+            if (frames++ % 300 == 0) {
+                std::fprintf(stderr, "[water] ring fit: %d of %d sectors on the patch; reach",
+                             fitted, kSectors);
+                for (int s = 0; s < kSectors; ++s) std::fprintf(stderr, " %.0f", reach[s]);
+                std::fprintf(stderr, "\n");
+                std::fflush(stderr);
+            }
+        }
+    }
+
+    // The furthest water vertex from (cx, cz) in each of the ring's sectors,
+    // over every segment-3 vertex load reached from a list.
+    void collect_patch_reach(uint32_t physical_addr, int depth, float cx, float cz,
+                             float* reach) const {
+        using wr64::waterring::kSectors;
+        const float step = 6.2831853f / float(kSectors);
+        uint32_t cursor = physical_addr;
+        for (uint32_t steps = 0; steps < 4096; ++steps) {
+            const uint32_t* c = words(cursor);
+            const uint32_t w0 = c[0];
+            const uint32_t w1 = c[1];
+            const uint8_t op = static_cast<uint8_t>(w0 >> 24);
+            cursor += 8;
+            if (op == kOpEndDisplayList) return;
+            if (op == kOpVtx && ((w1 >> 24) & 0xF) == kWaterSegment) {
+                const uint32_t addr = physical(w1);
+                const uint32_t count = (w0 >> 9) & 0x7Fu;
+                for (uint32_t i = 0; i < count; ++i) {
+                    const float dx = float(signed_half(addr + i * 16)) - cx;
+                    const float dz = float(signed_half(addr + i * 16 + 4)) - cz;
+                    const float r = std::sqrt(dx * dx + dz * dz);
+                    int s = int(std::lround(std::atan2(dz, dx) / step));
+                    s = ((s % kSectors) + kSectors) % kSectors;
+                    reach[s] = std::max(reach[s], r);
+                }
+                continue;
+            }
+            if (op == kOpDisplayList) {
+                const bool branch = ((w0 >> 16) & 0xFF) != 0;
+                if (branch) { cursor = physical(w1); continue; }
+                if (depth < 3) collect_patch_reach(physical(w1), depth + 1, cx, cz, reach);
+            }
+        }
+    }
+
     // Emits the ring, wearing the game's own water attributes.
     //
     // `sample` is the address of the first vertex of the game's own water list.
@@ -1644,7 +1768,7 @@ struct Walker {
             std::fprintf(stderr,
                          "[water] ring: %d sectors x %d circles, %.0f to %.0f units,"
                          " tc (%d,%d) shade %04X%04X\n",
-                         kSectors, kCircles, ring.inner, ring.outer,
+                         kSectors, ring.circles, ring.inner, ring.outer,
                          int16_t(tc_s), int16_t(tc_t), shade_rg, shade_ba);
             std::fflush(stderr);
         }
@@ -1656,7 +1780,7 @@ struct Walker {
         constexpr int kMaxColumns = 16;
         constexpr int kColumns = kSectors + 1;              // the seam closes
 
-        for (int band = 0; band + 1 < kCircles; ++band) {
+        for (int band = 0; band + 1 < ring.circles; ++band) {
             for (int first = 0; first < kSectors; first += kMaxColumns - 1) {
                 const int columns = std::min(kMaxColumns, kColumns - first);
                 if (columns < 2) break;
@@ -1687,11 +1811,29 @@ struct Walker {
                         // edge -- which is what "another colour out there"
                         // looks like. Fading the last circle to nothing lets
                         // the two meet instead of abut.
+                        //
+                        // Only the last one. The radii grow geometrically, so
+                        // the outer bands are enormous: from 860 to the far
+                        // plane the nine circles land at roughly 860, 1241,
+                        // 1791, 2585, 3731, 5384, 7770, 11213, 16182. Fading
+                        // the second-outermost as well -- which this did --
+                        // starts the fade at 7,770 and spends more than half
+                        // the ring's reach on it, so the sea thins out barely
+                        // a third of the way to the distance the setting asks
+                        // for (issue #12). One band is enough to meet the haze
+                        // band without abutting it, and it is the band whose
+                        // far edge is the far plane, where nothing is drawn
+                        // anyway.
+                        //
+                        // WR64_WATER_RING_FADE2=1 fades the outer two again,
+                        // for the comparison.
+                        static const bool fade_two =
+                            std::getenv("WR64_WATER_RING_FADE2") != nullptr;
                         uint16_t ba = shade_ba;
-                        if (circle == kCircles - 1) {
+                        if (circle == ring.circles - 1) {
                             ba = uint16_t((shade_ba & 0xFF00) | 0);
                         }
-                        else if (circle == kCircles - 2) {
+                        else if (fade_two && circle == ring.circles - 2) {
                             ba = uint16_t((shade_ba & 0xFF00) | (alpha / 2));
                         }
                         // WR64_WATER_RING_DEBUG paints it opaque magenta, which
@@ -3134,16 +3276,18 @@ uint32_t rewrite(uint8_t* rdram, uint32_t list_vaddr) {
             if (known_water) w.water_material(true);
             w.emit(w0, w1);
             // The ring goes after the game's own surface and inside the same
-            // material bracket: after, so the patch is drawn first and the
-            // overlap between them is covered by the game's own vertices rather
-            // than by these; inside, so the modern renderer shades both as one
-            // sea and the interpolation samples both as one surface. It is
-            // claimed by list identity, so the two split-screen views each get
-            // their own.
+            // material bracket, so the modern renderer shades both as one sea.
+            // Its inner edge is fitted to the patch's outline first: drawn after
+            // a translucent patch, any overlap would be water drawn twice. It
+            // has a transform of its own (water_ring_transform) so the water's
+            // interpolation never samples it. It is claimed by list identity,
+            // so the two split-screen views each get their own.
             if (known_water) {
-                if (const auto* ring = wr64::waterring::claim(list_vaddr)) {
+                if (const auto* claimed = wr64::waterring::claim(list_vaddr)) {
+                    wr64::waterring::Ring ring = *claimed;
+                    w.fit_ring_to_patch(ring, w.physical(w1));
                     w.water_ring_transform(true);
-                    w.water_ring(*ring, w.scan_first_vertex_address(w.physical(w1), 0));
+                    w.water_ring(ring, w.scan_first_vertex_address(w.physical(w1), 0));
                     w.water_ring_transform(false);
                 }
             }

@@ -118,9 +118,10 @@ translucency.
 |---|---|
 | When it is drawn | whenever **either** Water quality or Draw Distance is above Original |
 | How far | as far as Draw Distance asks for, or the course's own cull, whichever is further |
-| Size | 9 circles x 48 sectors: 432 vertices and 384 quads a frame, against the game's own 500 vertices |
+| Size | 13 circles x 48 sectors. 624 distinct points, but the emitter repeats a column at each chunk seam, so **1,248 vertices and 576 quads are submitted a frame, per view**, against the game's own 500 vertices. `WR64_WATER_RING_BANDS=9` restores the original nine circles without a rebuild |
+| Waves | carried only as far as the game is **simulating** water -- the hexagon of `D_80192494` cells around the camera, 768 units in a one-player race -- then tapered to flat over the next 1,400. Past the window the field is a frozen snapshot, not a swell (GAME-INTERNALS, *What the field holds outside the window*). `WR64_WATER_RING_WAVES_FAR=1` samples it undamped again; `_WAVE_FULL` and `_WAVE_FLAT` move the two radii |
 | Turning it off | `WR64_NO_WATER_RING=1`, or `WR64_WATER_RING_DEBUG=1` to see where it is, painted magenta |
-| What it costs | nothing measurable. Over five configurations of the same attract demo, 84 two-second windows each, the port held the game's own 20 frames per second in **98%** of windows with and without it; the full stack -- Best water, the ring, and the draw distance at Extended (then called Maximum) -- held it in 96%. The metric saturates at the game's own rate, so this says the port keeps up, not how much headroom is left |
+| What it costs | the height sampling on the game thread is **0.14-0.18 ms a ring** on an Iris Xe (`WR64_WATER_RING_COST=1`), which also reports the camera's speed and the live window's size. Earlier notes said "nothing measurable"; that came from a frame-rate window count which saturates at the game's own 20 fps and cannot see a cost that does not cross it. The GPU side is still unmeasured on this hardware |
 
 With both settings at Original nothing is added at all, because a frame with
 neither raised has to be the frame the game itself would have produced.
@@ -349,10 +350,18 @@ renderer ignores and the interpolation accepts. `WR64_WATER_BY_INDEX=1` restores
 the old path for comparison, and `WR64_WATER_INTERP_STATS=1` reports the cost.
 
 **Known: the ring's own heights shimmer on big swells.** Its vertices slide with
-the camera and sample the wave field at new points every game frame, 110 units
-apart or more against a 64-unit field. Interpolation smooths it between frames
-but the content itself changes; anchoring the ring's vertices to world lattice
-points is the fix, not yet made.
+the camera -- measured at **48-57 units a frame** while racing, peaking at one
+64-unit lattice cell -- so each one lands in a different cell nearly every frame,
+and it samples at 110 units apart or more against that cell. Interpolation
+smooths it between frames but the content itself changes.
+
+Most of it is gone since the waves stopped being carried past the window the
+game actually simulates: what the ring was sampling out there was a frozen
+snapshot, so the shimmer was its own sampling pattern crawling over dead data
+rather than water moving. A slight jitter remains within the live window, where
+the ring samples real waves too coarsely to carry them. **Anchoring the ring's
+vertices to world lattice points is the fix, still not made**; note that it
+changes what a vertex slot means, and the ring is interpolated by slot.
 
 **One-player water tests depth without writing it, and then draws flat horizon
 quads after the moving grid.** Under the original blending that is fine. Under
