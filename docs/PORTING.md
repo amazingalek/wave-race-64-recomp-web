@@ -1937,16 +1937,43 @@ painted band, also flat at y = 0, so the patch's pinned collar blended into it
 and was invisible. The ring puts *wavy* geometry outside that collar, which
 would leave a flat annulus between wavy water inside and wavy water outside.
 
-**Wrong turn, tested and reverted:** *fitting the ring's inner edge to the patch
-outline.* `Walker::fit_ring_to_patch` measured the game's water vertices in the
+**Measured wrong turn:** *fitting the ring's inner edge to the patch outline per
+frame.* `Walker::fit_ring_to_patch` measured the game's water vertices in the
 frame being drawn, binned them by direction from the ring's centre, started the
 ring at the furthest one in each sector, and collapsed the circles that fell
-inside. It removed the 860-922 overlap -- and did not remove the edge. That is
-evidence against the doubled-translucency explanation and for the collar,
-**provided the fit actually applied**: `WR64_WATER_RING_FIT_LOG=1` reports
-"ring fit: N of 48 sectors on the patch", and a low N means the mechanism never
-engaged and the overlap is untested rather than refuted. Establish N before
-concluding anything from this.
+inside. `WR64_WATER_RING_FIT_LOG=1`, racing:
+
+| sectors fitted, of 48 | reach reported |
+|---:|---|
+| 18 | 1040 1154 1287 **2797** … then 28 zeros |
+| 16 | 21 zeros, then 510 1982 1182 … **3109** |
+| **48** | **1024 966 923 896 886 895 … 922 966 1023** |
+| 11 | 28 zeros, then 1483 … **3622** |
+| 14 | 1810 **3282** … then 33 zeros |
+
+Two results, and the second is why this was abandoned:
+
+- **The scan is unreliable.** The one frame that fitted all 48 sectors reported
+  886-1025, which *is* the patch (reach 922, extent 1536x1330, so a rounded
+  outline in that band). Every partial frame reported 2500-3600 instead, which is
+  not the patch at all, plus zeros for sectors where it found no segment-3 vertex.
+- **The fitted arc rotates every frame** -- sectors 0-15, then 21-38, then 2-17,
+  then 28-39. So a sector's inner vertex moves between 860 and as much as 3600
+  from one frame to the next, and the collapse loop springs most of that sector's
+  nine circles in and out with it.
+
+That second result breaks the ring's interpolation contract (see *Waves that
+jitter on a big swell* above): the ring has its own transform precisely because
+its vertices are **the same slots each frame, carried with the camera
+continuously**, which is what makes RT64's pairing by index correct for it. A
+per-frame refit makes slot *i* a discontinuous point, and the symptom is far
+water that jitters and beats while the near patch, interpolated by world XZ,
+stays right.
+
+**The lesson for any retry:** the patch's reach is recorded as *"922 units,
+identical in every frame"*. A per-frame rescan measures a constant, badly. Measure
+the outline **once** and cache it per course, so every sector keeps a fixed radius
+and slot *i* stays continuous.
 
 - `WR64_WATER_RING_DEBUG=1` paints the ring opaque magenta: an edge *inside* the
   magenta is the patch's collar, an edge *at* its boundary is the ring.
