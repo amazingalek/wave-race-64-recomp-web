@@ -509,6 +509,14 @@ int window_cells() {
     return g_window_cells.load(std::memory_order_relaxed);
 }
 
+namespace {
+// Builds and publishes one view's ring. Defined below publish(), which is what
+// decides how many views there are.
+void publish_view(uint8_t* rdram, recomp_context* ctx, uint32_t display_list,
+                  uint32_t camera_index, int32_t cells, bool window_valid,
+                  int32_t cull);
+}  // namespace
+
 bool enabled() {
     static const bool off = [] {
         const char* value = std::getenv("WR64_NO_WATER_RING");
@@ -582,10 +590,34 @@ void publish(uint8_t* rdram, recomp_context* ctx, uint32_t display_list) {
     const int32_t cells = static_cast<int32_t>(read_word(rdram, kWindowRadius));
     const bool window_valid = cells >= 2 && cells <= 64;
     g_window_cells.store(window_valid ? cells : 12, std::memory_order_relaxed);
+
+    // **One ring per view.** A split screen draws the water twice, from two
+    // cameras, through two different display lists -- and this published a
+    // single ring, centred on whichever camera the global happened to name at
+    // submit time. The first water call claimed it and the second found
+    // nothing, so player two raced with the sea stopping at the patch's edge
+    // while the vertex scratch was sized for two rings and the comment above
+    // the claim said each view got its own. Three things describing two
+    // different behaviours, none of them the one that shipped.
+    //
+    // They are pushed in view order and the rewriter claims them in the order
+    // it meets the water calls, which is the same order.
+    const uint32_t players = read_word(rdram, kPlayers);
+    const int views = players == 2 ? 2 : 1;
+    for (int view = 0; view < views; ++view) {
+        const uint32_t index = views == 2 ? uint32_t(view)
+                                          : (read_word(rdram, kCameraIndex) & 3);
+        publish_view(rdram, ctx, display_list, index, cells, window_valid, cull);
+    }
+}
+
+namespace {
+void publish_view(uint8_t* rdram, recomp_context* ctx, uint32_t display_list,
+                  uint32_t camera_index, int32_t cells, bool window_valid,
+                  int32_t cull) {
     const float full_to = window_valid ? waves_full_to(cells) : kSeamRadius;
 
-    const uint32_t index = read_word(rdram, kCameraIndex) & 3;
-    const uint32_t camera = kCameraBase + index * kCameraStride;
+    const uint32_t camera = kCameraBase + camera_index * kCameraStride;
     const float cx = read_float(rdram, camera + kCameraX);
     const float cz = read_float(rdram, camera + kCameraZ);
     if (!std::isfinite(cx) || !std::isfinite(cz)) return;
@@ -637,14 +669,19 @@ void publish(uint8_t* rdram, recomp_context* ctx, uint32_t display_list) {
     // A slot's height changes by roughly this distance times the field's slope,
     // so it decides how much amplitude the ring can carry before it reads as
     // shimmer. Measured here rather than assumed.
+    // Per camera, because a split screen publishes two rings a frame from two
+    // cameras: one shared pair of previous coordinates would measure the
+    // distance between the two players rather than either one's motion.
     static const bool cost = std::getenv("WR64_WATER_RING_COST") != nullptr;
-    static float prev_cx = 0.0f, prev_cz = 0.0f;
-    static bool have_prev = false;
+    const uint32_t slot = camera_index & 3;
+    static float prev_cx[4] = {}, prev_cz[4] = {};
+    static bool have_prev[4] = {};
     static double delta_total = 0.0;
     static float delta_max = 0.0f;
     float delta = 0.0f;
-    if (have_prev) {
-        delta = std::sqrt((cx - prev_cx) * (cx - prev_cx) + (cz - prev_cz) * (cz - prev_cz));
+    if (have_prev[slot]) {
+        delta = std::sqrt((cx - prev_cx[slot]) * (cx - prev_cx[slot]) +
+                          (cz - prev_cz[slot]) * (cz - prev_cz[slot]));
         // A course or view change teleports the camera; that is not a frame's
         // motion. Racing measures 48-57 units a frame with peaks at 63-65, so
         // anything past a few hundred is a jump, not a lap.
@@ -653,9 +690,9 @@ void publish(uint8_t* rdram, recomp_context* ctx, uint32_t display_list) {
             delta_max = std::max(delta_max, delta);
         }
     }
-    prev_cx = cx;
-    prev_cz = cz;
-    have_prev = true;
+    prev_cx[slot] = cx;
+    prev_cz[slot] = cz;
+    have_prev[slot] = true;
 
     const auto started = cost ? std::chrono::steady_clock::now()
                               : std::chrono::steady_clock::time_point{};
@@ -757,6 +794,7 @@ void publish(uint8_t* rdram, recomp_context* ctx, uint32_t display_list) {
     // ones.
     while (g_pending.size() > 16) g_pending.pop_front();
 }
+}  // namespace
 
 const Ring* claim(uint32_t display_list) {
     if (!enabled()) return nullptr;

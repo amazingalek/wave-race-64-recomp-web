@@ -1693,6 +1693,14 @@ struct Walker {
     // not -- the patch's reach is recorded as identical in every frame, so a
     // retry should measure the outline once and cache it per course.
     // WR64_WATER_RING_FIT=1 turns it on for that work.
+    // A world coordinate as a Vtx holds it, saturating rather than wrapping.
+    static int16_t clamp_coord(float value) {
+        if (!std::isfinite(value)) return 0;
+        if (value > 32000.0f) return 32000;
+        if (value < -32000.0f) return -32000;
+        return int16_t(std::lround(value));
+    }
+
     void fit_ring_to_patch(wr64::waterring::Ring& ring, uint32_t list_physical) {
         using wr64::waterring::kSectors;
         using wr64::waterring::kCircles;
@@ -1710,8 +1718,14 @@ struct Walker {
             ++fitted;
             const float angle = step * float(s);
             auto& inner = ring.vertices[s];
-            inner.x = int16_t(std::lround(ring.cx + reach[s] * std::cos(angle)));
-            inner.z = int16_t(std::lround(ring.cz + reach[s] * std::sin(angle)));
+            // Saturating, not wrapping. A Vtx coordinate is an s16, and the
+            // header's claim that "6,000 units fits with room to spare" stopped
+            // being the whole story when the ring's reach became the far plane
+            // at 16,192: a course whose origin is a few thousand units out puts
+            // a vertex past 32,767, and a bare cast folds it to the far side of
+            // the world rather than clamping it to the edge.
+            inner.x = clamp_coord(ring.cx + reach[s] * std::cos(angle));
+            inner.z = clamp_coord(ring.cz + reach[s] * std::sin(angle));
             inner.y = 0;
             for (int c = 1; c < kCircles; ++c) {
                 if (ring.radius[c] > reach[s]) break;
@@ -1838,7 +1852,25 @@ struct Walker {
                 if (columns < 2) break;
                 const uint32_t count = uint32_t(columns * 2);
                 const uint32_t base = kVertexScratch + vertex_cursor;
-                if (vertex_cursor + count * 16 > kVertexScratchSize) return;
+                // An overrun is two failures, not one: the ring loses its outer
+                // bands, *and* the vertex count changes, which fails RT64's
+                // `curVertexCount == prevVertexCount` test and costs the whole
+                // ring its interpolation for that frame. Both are invisible --
+                // the ring's own log line still says it was drawn. Say so.
+                if (vertex_cursor + count * 16 > kVertexScratchSize) {
+                    static bool warned = false;
+                    if (!warned) {
+                        warned = true;
+                        std::fprintf(stderr,
+                                     "[water] ring vertex scratch full at band %d of %d:"
+                                     " %u of %u bytes used, outer bands dropped and this"
+                                     " frame's ring loses its interpolation\n",
+                                     band, ring.circles - 1, vertex_cursor,
+                                     kVertexScratchSize);
+                        std::fflush(stderr);
+                    }
+                    return;
+                }
 
                 for (int col = 0; col < columns; ++col) {
                     const int sector = (first + col) % kSectors;
