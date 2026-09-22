@@ -8,6 +8,40 @@ Versions follow [semantic versioning](https://semver.org) loosely: while the
 project is below 1.0, the minor number moves when something a player would
 notice changes.
 
+## [1.0.3](docs/releases/1.0.3.md) — Water
+
+- **The distant sea has waves all the way to the horizon.** It used to fade out
+  around 7,770 units of the 16,192 the draw distance reaches, because the ring's
+  outer two bands were an alpha fade. Only the outermost fades now, and past the
+  point where the game stops simulating water the port synthesises a swell --
+  four crossing components, evaluated at each vertex's world position so the
+  surface stands still while the ring slides through it, phased from the game's
+  own frame counter. Its amplitudes come from the wave field's own statistics.
+- **The flat edge that travelled with the camera is gone** (issue #19), and so is
+  the shimmering of the distant water. Three separate causes, found in this
+  order: the ring was sampling cells the game has not touched since they were
+  stamped, its samples were point-sampled below their own spacing, and its
+  heights were quantised to whole world units -- a 1-unit staircase walked at
+  20 fps. Heights are carried in sixteenths now and samples are filtered over
+  their footprint. A fourth, the far swell's phase losing precision against a
+  frame counter that climbs without bound, showed only on water holding a steady
+  height.
+- **Draw Distance widens the water the game itself simulates.** The game
+  integrates waves only inside a hexagon around the camera -- 768 units in a
+  one-player race -- and nothing outside it moves or carries a buoy. Extended
+  widens that to 1,024 units, **78% more area**, using the game's own parameter
+  set and its own mesh from the opening screen. Original is untouched. One
+  player only: the second view's vertex arena cannot hold the larger hexagon.
+- **Two players: the second screen has sea past the game's own water.** It never
+  had. Only one ring was published a frame and the first view claimed it.
+- **Water heights are correct on slopes.** The game's height query returns a
+  plane's constant over the length of its normal, not a height; the port took it
+  as one, low by 0.6% typically and up to 15% on the steepest waves.
+- **Diagnostics that were silent now speak.** A full ring vertex scratch is
+  reported instead of quietly dropping the outer bands and the frame's
+  interpolation, and `WR64_WATER_RING_DEBUG` says when it cannot work rather
+  than doing nothing.
+
 ## [1.0.2](docs/releases/1.0.2.md) — HUD fixes
 
 - **Race HUD placement fixes at widescreen**: four more HUD textures, among them
