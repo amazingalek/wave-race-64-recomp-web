@@ -1921,6 +1921,19 @@ surge described above.
 distance ahead, travelling with the camera, on every course and worst on rough
 water. Present at Draw Distance **Original**. Absent in 0.9.0, present in 1.0.2.
 
+**Resolved, and the cause was never isolated.** Confirmed gone in play after the
+far-water work below. What is worth recording is what it was *not*:
+`fit_ring_to_patch`, the mechanism written specifically to fix this, is **off**
+in the build where the symptom disappeared. Whatever cured it was one of the
+changes made for other reasons -- the ring no longer carrying field-sampled
+waves past the window the game actually simulates, its heights gaining sub-unit
+precision, or its samples being filtered over their footprint -- and no single
+one of them was tested against this symptom on its own.
+
+So this is a fix without an attribution, which is worth less than it looks: if
+the edge returns, the notes below are still the right place to start, and the
+first question is which of those three changed underneath it.
+
 Two camera-centred circles are candidates, 62 units apart, and the symptom does
 not by itself say which:
 

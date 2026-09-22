@@ -337,6 +337,10 @@ What is already established, and is not to be re-derived:
 raised: no camera-centred edge in motion; issue #12's cutoff either gone or
 recorded with a measurement saying what still limits it; the hand-over jump at a
 world point no worse than before the change; frame rate unchanged on the laptop.
+*Met, in 1.0.3's builds. Issue #19's edge is confirmed gone in play and issue
+#12's cutoff is answered -- the sea reaches the far plane and carries a swell
+the whole way. Neither was attributed to a single change, which `PORTING.md`
+§7 records rather than papers over.*
 
 ### 10 — The far sea: stop sampling water the game is not simulating
 
