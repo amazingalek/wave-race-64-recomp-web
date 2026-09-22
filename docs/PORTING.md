@@ -1915,6 +1915,35 @@ surge described above.
 - **Lesson:** interpolation history that rides in an optional renderer's
   payload is switched off with that renderer. Gate it on "a snapshot exists".
 
+### Two walks over the same draw data, one of them unchecked
+
+`WaterRenderer::collectNormals` reads `data.faceIndices[start + i]` and
+`data.posFloats[v * 3]` with neither range checked.
+`GameFrame`'s interpolation (`rt64_game_frame.cpp`) walks the *same* arrays for
+the same draw and checks both, because neither holds by construction:
+
+| | source | why it can be out of range |
+|---|---|---|
+| `start + count` vs `faceIndices.size()` | `meshDesc.faceIndicesStart` | `rt64_state.cpp` advances the cursor only for projections that use a viewport, so a pair that skipped the projection processor leaves the two out of step |
+| `v` vs `vertexCount()` | a face index | only addresses this draw's vertices if the draw's bookkeeping is intact |
+
+- The guard is in `tools/patches/rt64-water.patch`, with `rejectedRanges` and
+  `rejectedFaces` counters that print once each if they ever fire. A non-zero
+  count in a player's log is the thing to ask for.
+- **Not** the cause of the heap aborts in issue #27, and it should not be
+  recorded as one. The mechanism that would have made it one -- an unclamped
+  `normals[vertex.x]` store in `WaterNormalsCS` reaching host memory -- does not
+  hold: `plume_vulkan.cpp` passes the *queried* `VkPhysicalDeviceFeatures2` as
+  `pEnabledFeatures`, so `robustBufferAccess` is enabled wherever the driver
+  supports it, and an out-of-range structured-buffer write is discarded rather
+  than undefined. Checking only the `VK_EXT_robustness2` block says the
+  opposite, and says it convincingly; check `pEnabledFeatures` as well.
+- These are reads, so they explain a segfault, not a `malloc()` abort. Issue #27
+  was still open when this landed.
+- **Lesson:** when two pieces of code walk the same arrays and only one
+  bounds-checks them, the checked one is the specification. Copying such a
+  renderer into another port copies the unchecked walk too.
+
 ### Window creation affects the aspect ratio
 
 RT64 derives the aspect ratio it expands the game into from the **swap chain's**

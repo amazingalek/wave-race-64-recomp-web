@@ -1367,10 +1367,11 @@ diff --git a/src/render/rt64_water_renderer.cpp b/src/render/rt64_water_renderer
 new file mode 100644
 --- /dev/null
 +++ b/src/render/rt64_water_renderer.cpp
-@@ -0,0 +1,747 @@
+@@ -0,0 +1,786 @@
 +#include "rt64_water_renderer.h"
 +#include "rt64_render_target.h"
 +#include "hle/rt64_workload.h"
++#include <algorithm>
 +#include <cassert>
 +#include <cstdio>
 +#include <cstdlib>
@@ -2057,10 +2058,48 @@ new file mode 100644
 +    return ptr;
 +}
 +
++// Collects the water surface's faces, grouped by position, for the normals pass.
++//
++// Both ranges are bounds-checked, and they have to be. `faceIndicesStart` is a
++// running cursor that rt64_state.cpp only advances for projections that use a
++// viewport, so a framebuffer pair that did not go through the projection
++// processor -- one added by State::fullSync, say -- can leave the cursor and
++// faceIndices.size() out of step. And a face index only addresses this draw's
++// vertices if the draw's bookkeeping is intact.
++//
++// Unchecked, an out-of-range `v` is not merely a bad read here: it is written
++// verbatim into normalVertices, uploaded, and used by WaterNormalsCS as the
++// *write* index `normals[vertex.x]`. Vulkan robustBufferAccess is not requested
++// (plume_vulkan.cpp asks VK_EXT_robustness2 only for nullDescriptor), so that
++// store is undefined rather than clamped, and on an integrated GPU the target
++// is shared system memory -- which is how this reached the player as a glibc
++// heap abort with Water Quality: Modern (issue #27).
++//
++// rt64_game_frame.cpp's interpolation walks this same data and already checks
++// both; this is the same guard, and the counters say if it ever fires.
 +void WaterRenderer::collectNormals(const DrawData &data, uint32_t start, uint32_t count, uint64_t group) {
 +    wireStarts.push_back(uint32_t(wireIndices.size()));
++
++    const size_t vertexCount = std::min(size_t(data.vertexCount()), data.posFloats.size() / 3);
++    if (size_t(start) + count > data.faceIndices.size()) {
++        if (rejectedRanges++ == 0) {
++            fprintf(stderr, "[water] normals: face range %u+%u past the frame's %zu indices; skipped\n",
++                    start, count, data.faceIndices.size());
++            fflush(stderr);
++        }
++        return;
++    }
++
 +    for (uint32_t i=0; i+2<count; i+=3) {
 +        interop::uint4 f{data.faceIndices[start+i],data.faceIndices[start+i+1],data.faceIndices[start+i+2],0};
++        if (f.x>=vertexCount || f.y>=vertexCount || f.z>=vertexCount) {
++            if (rejectedFaces++ == 0) {
++                fprintf(stderr, "[water] normals: face (%u,%u,%u) past the frame's %zu vertices; skipped\n",
++                        f.x, f.y, f.z, vertexCount);
++                fflush(stderr);
++            }
++            continue;
++        }
 +        if (draws.back().material.identity.y==12) wireIndices.insert(wireIndices.end(),{f.x,f.y,f.y,f.z,f.z,f.x});
 +        for (uint32_t j=0;j<3;j++) {
 +            const uint32_t v = f[j];
@@ -2119,7 +2158,7 @@ diff --git a/src/render/rt64_water_renderer.h b/src/render/rt64_water_renderer.h
 new file mode 100644
 --- /dev/null
 +++ b/src/render/rt64_water_renderer.h
-@@ -0,0 +1,207 @@
+@@ -0,0 +1,212 @@
 +#pragma once
 +#include "rt64_buffer_uploader.h"
 +#include "rt64_shader_library.h"
@@ -2246,6 +2285,11 @@ new file mode 100644
 +    std::map<std::tuple<uint64_t,int,int,int>, NormalGroup> normalGroups;
 +    std::vector<interop::uint4> normalVertices, normalFaces;
 +    std::vector<uint32_t> wireIndices, wireStarts;
++    // Faces collectNormals refused because their range or their vertices fell
++    // outside the frame's own data. Each is reported once; a non-zero count is
++    // the signature of issue #27, where such an index reached the normals
++    // shader as an unclamped buffer write.
++    uint64_t rejectedRanges = 0, rejectedFaces = 0;
 +    BufferPair wireBuffer;
 +    RenderIndexBufferView wireView;
 +    BufferPair normalVertexBuffer, normalFaceBuffer;
