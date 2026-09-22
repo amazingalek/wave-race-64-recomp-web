@@ -68,9 +68,30 @@ constexpr int kCircles = 13;
 
 constexpr int kVertexCount = kSectors * kCircles;
 
-// One vertex, in world space, exactly as a Vtx holds it. The game's own water
-// is drawn under an identity model matrix with world-space vertices, so this
-// can be too -- and 6,000 units fits an int16 with room to spare.
+// How much finer than a world unit the ring's heights are carried.
+//
+// A Vtx holds s16 coordinates, so a vertex standing in world space has its
+// height rounded to a whole unit. The game's own patch can live with that: its
+// vertices sit *at* lattice points, so they do not resample as the camera moves
+// and the rounding is a fixed error. The ring's vertices slide continuously,
+// which turns the same rounding into a **1-unit staircase walked at 20 Hz** --
+// and against a far swell whose whole amplitude is about four units, that is a
+// quarter of the wave. It is the jitter that survived both the distance taper
+// and a footprint filter, neither of which can help: filtering lowers the
+// signal's variance and leaves the step size exactly where it was.
+//
+// So the heights are carried pre-multiplied by this, and the ring's own model
+// matrix -- which it already had, and which was an identity -- scales Y back
+// down by the same factor. Sixteen gives a sixteenth of a world unit, and the
+// worst height the field can hold (+/-128 units, plus the course's water level)
+// stays far inside an s16.
+constexpr int kHeightScale = 16;
+
+// One vertex, exactly as a Vtx holds it: x and z in world units, y in
+// sixteenths of one (see kHeightScale). The game's own water is drawn under an
+// identity model matrix with world-space vertices and this is drawn under a
+// matrix that differs from identity only in Y, so the two stand in the same
+// world -- and 16,000 units fits an int16.
 struct Vertex {
     int16_t x, y, z;
 };

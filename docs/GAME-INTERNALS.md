@@ -725,6 +725,61 @@ simulated hexagon.** That also explains why 100% of the patch's outline vertices
 sit at y = 0 while only 2-11% inside do: the outline is the window's own
 boundary ring, which the pair-stepping never fully drives.
 
+#### The window's size is a set of numbers, and the mesh is baked
+
+Raising N is the one change that makes the game simulate waves over more water,
+so what travels with it matters. `func_8004F9E0` writes N *and* copies a
+thirteen-word parameter set from `D_800D4684[index]` (index 0, 13 or 26) into
+`D_80192460`. Every word of that set scales with N:
+
+| word | N=16 | N=12 | N=10 | what it is |
+|---|---:|---:|---:|---|
+| 0 | 406 | 234 | 165 | the hexagon's centre cell, `3N(N+1)/2` -- **except at N=16, where the table holds 406 and the formula gives 408** |
+| 1-6 | 817-822 | 469-474 | 331-336 | the six skirt vertices, `count` … `count+5` |
+| 7-12 | 0, 16, 424, 816, 800, 392 | 0, 12, 246, 468, 456, 222 | 0, 10, 175, 330, 320, 155 | the hexagon's six corner cells |
+
+Two more values are computed from N rather than read: `D_8019249C` =
+`3N(N+1)+1`, the cell count, and `D_80192498` = `N << 6`, the radius in world
+units. Writing N without its set therefore leaves two cell counts disagreeing,
+and the water bobs and tears.
+
+The window-shape lists are rebuilt from N by **`func_8004E614`, which is called
+only from `func_8004F9E0`** -- so changing N later without re-running it leaves
+`D_80160430` (2 bytes a cell, `0x668` = room for 820) and `D_80160A98` (8 bytes
+a cell, `0x1988` = room for exactly 817) still describing the old size. Neither
+list is ring-ordered, so a smaller N is *not* a prefix of a larger one: row
+lengths are `2N ± v + 1`, so every entry changes when N does.
+
+**The drawn mesh's triangles are static display lists in ROM, one per size.**
+`func_80050204` only fills a vertex arena; it never emits a triangle. Four lists
+exist in the asset segment:
+
+| ROM | blocks | vertex loads | triangles | for |
+|---|---:|---:|---:|---|
+| `0xFE380`-`0x101618` | 77 | 867 | 1548 | N=16, opening and rider select |
+| `0x101620`-`0x1032E0` | 50 | **500** | 876 | **N=12, a one-player race** |
+| `0x1032E8`-`0x104708` | 38 | 354 | 612 | N=10, two players, view 0 |
+| `0x104710`-`0x105B30` | 38 | 354 | 612 | N=10, two players, view 1 |
+
+That resolves the "50 blocks / 500 vertices" measured from display-list traces:
+**500 is vertices *loaded*, not stored.** The arena holds 475 (469 cells plus 6
+skirt) and the list re-loads 25 of them, one per row seam.
+
+The arenas live in `GfxPool`: player 0 at `+0x13D68`, `0x3370` = **823 Vtx**,
+which is 817 + 6 -- sized exactly for N=16, because the opening screen uses it.
+Player 1's at `+0x170D8` is only `0x1F10` = **497 Vtx**, which caps a second
+view at N=12.
+
+So in a one-player race **nothing overflows at N=16** -- every buffer on the
+path is already N=16-sized. What breaks is that the game still draws the N=12
+list over an N=16 arena: thirteen rows of a thirty-three-row hexagon, with the
+seams in the wrong places.
+
+Beyond 16 there is no list to draw, and the ceilings are: the skirt radius
+`D_800D4720` is a constant **1500** world units and must exceed `64N`, so
+**N <= 23** unless it moves; and the field's 128-cell axis means the window
+wraps onto itself past **N = 63**.
+
 #### Where the energy comes from
 
 A course loads up to **eight wave-generator line segments** into `D_801BFA48`

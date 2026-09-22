@@ -1612,7 +1612,15 @@ struct Walker {
             if (matrix_cursor + 64 > kMatrixScratchSize) return;
             const uint32_t address = kMatrixScratch + matrix_cursor;
             matrix_cursor += 64;
-            write_matrix(address, Mat4::identity());
+            // Identity but for Y, which is divided by the factor the ring's
+            // heights are carried multiplied by, so a vertex standing at a
+            // sixteenth of a world unit lands where it means to. See
+            // wr64::waterring::kHeightScale: an s16 height in whole world units
+            // walks a 1-unit staircase as a sliding vertex resamples, and that
+            // was the jitter left after the taper and the footprint filter.
+            Mat4 ring_space = Mat4::identity();
+            ring_space.m[1][1] = 1.0f / float(wr64::waterring::kHeightScale);
+            write_matrix(address, ring_space);
             emit((uint32_t(kOpMtx) << 24) | (kMtxPush << 16) | 0x40, 0x80000000u | address);
             ring_transform_open = true;
             if (water_interp) vertex_interp_group(kRingId);

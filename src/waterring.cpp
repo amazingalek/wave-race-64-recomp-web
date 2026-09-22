@@ -35,6 +35,11 @@ constexpr uint32_t kCameraBase = 0x00227C80;
 constexpr uint32_t kCameraStride = 0x10C;
 constexpr uint32_t kCameraX = 0x4C;
 constexpr uint32_t kCameraZ = 0x54;
+// Between the two the game keeps the height. Only reported, never used to place
+// anything -- it is what turns "the sea reaches 16,192 units" into "the sea
+// reaches N pixels below the horizon", which is the number that decides whether
+// reaching further is worth anything.
+constexpr uint32_t kCameraY = 0x50;
 
 // `D_80192494`, the radius in lattice cells of the window the game simulates
 // water in. Read by the integrator (`func_8004EAA4`) and by the mesh builder
@@ -144,7 +149,28 @@ float waves_full_to(int cells) {
 // ring cannot have that pairing: it is keyed to the water's matrix id and the
 // ring carries its own. Filtering fixes the aliasing without touching what a
 // slot means.
-//
+
+float env_float(const char* name, float fallback) {
+    const char* value = std::getenv(name);
+    if (value == nullptr || value[0] == 0) return fallback;
+    const float parsed = std::strtof(value, nullptr);
+    return std::isfinite(parsed) && parsed > 0.0f ? parsed : fallback;
+}
+
+// A box the width of the footprint attenuates what it cannot resolve; it does
+// not remove it. Widening the filter past the footprint suppresses more of the
+// residue at the cost of softening what the ring *can* carry, so the width is a
+// multiplier rather than a constant: WR64_WATER_RING_FILTER=1.5 filters over one
+// and a half footprints, =1 is the plain footprint, =2 is as soft as is worth
+// trying. It costs nothing to widen -- the taps move, they do not multiply.
+float filter_width() {
+    static const float width = [] {
+        const float w = env_float("WR64_WATER_RING_FILTER", 1.0f);
+        return w < 0.25f ? 0.25f : (w > 4.0f ? 4.0f : w);
+    }();
+    return width;
+}
+
 // WR64_WATER_RING_TAPS=1 point-samples again, for the comparison.
 int sample_taps() {
     static const int taps = [] {
@@ -191,17 +217,27 @@ struct Swell {
     float period;       // frames for a full cycle
 };
 
+// The longest component reaches the far plane. A wave is resolved while the
+// ring's chord is under half its length, and the chord at 16,192 units is 2,118,
+// so a 13,000-unit swell is carried the whole way out while a 6,000-unit one has
+// faded by 15,000 and the 1,800-unit chop is gone by 4,600. That spread is what
+// puts weather on the sea all the way to the horizon instead of stopping it
+// two-thirds of the way.
 constexpr Swell kSwell[] = {
-    { 2.0f, 6000.0f,  0.94f,  0.34f, 190.0f },
-    { 1.2f, 3400.0f, -0.42f,  0.91f, 130.0f },
-    { 0.8f, 1800.0f,  0.71f, -0.71f,  90.0f },
+    { 2.2f, 13000.0f, 0.62f,  0.78f, 280.0f },
+    { 2.0f,  6000.0f, 0.94f,  0.34f, 190.0f },
+    { 1.2f,  3400.0f, -0.42f, 0.91f, 130.0f },
+    { 0.8f,  1800.0f, 0.71f, -0.71f,  90.0f },
 };
 
 // How much of a component survives at a given sample spacing: full while the
-// chord resolves it, nothing once it cannot.
+// chord resolves it comfortably, nothing by the point it stops resolving it at
+// all. Nyquist is a chord of half a wavelength, so dropping a component by a
+// third of one is still on the safe side of it -- the earlier eighth-to-quarter
+// window was conservative, and it was throwing away swell the ring could carry.
 float footprint_fade(float chord, float wavelength) {
-    const float full = wavelength / 8.0f;
-    const float gone = wavelength / 4.0f;
+    const float full = wavelength / 6.0f;
+    const float gone = wavelength / 3.0f;
     if (chord <= full) return 1.0f;
     if (chord >= gone) return 0.0f;
     const float t = (chord - full) / (gone - full);
@@ -236,13 +272,6 @@ int circle_count() {
         return int(parsed);
     }();
     return count;
-}
-
-float env_float(const char* name, float fallback) {
-    const char* value = std::getenv(name);
-    if (value == nullptr || value[0] == 0) return fallback;
-    const float parsed = std::strtof(value, nullptr);
-    return std::isfinite(parsed) && parsed > 0.0f ? parsed : fallback;
 }
 
 // 1 where the field is live, 0 where it is dead, smoothstepped across the span
@@ -282,6 +311,64 @@ float read_float(const uint8_t* rdram, uint32_t offset) {
     float value;
     std::memcpy(&value, rdram + (offset & 0x007FFFFFu), sizeof value);
     return value;
+}
+
+void write_word(uint8_t* rdram, uint32_t offset, uint32_t value) {
+    std::memcpy(rdram + (offset & 0x007FFFFFu), &value, sizeof value);
+}
+
+// **Experiment.** How large a window the game simulates water in.
+//
+// `func_8004F9E0` writes this per scene as a literal: 16 cells on the opening
+// and rider select, 12 in a one-player race, 10 in two players. Cells are 64
+// world units, so a race simulates water 768 units around the camera and
+// nothing outside it moves, carries a buoy, or has a wave in it at all.
+//
+// The game already runs a 16-cell window itself, on the opening screen, so that
+// much is the cartridge's own configuration rather than an invented one. What
+// stops it going further is not known yet: the static window-shape list, the
+// mesh's vertex arena and the parameter sets all scale with it. Until that is
+// worked out this only *narrows* or restores, and raising it past 16 is refused.
+//
+// **N does not travel alone.** `func_8004F9E0` copies a thirteen-word parameter
+// set out of `D_800D4684` into `D_80192460`, choosing it per scene by the same
+// branch that writes N, and the first of those words is the window's cell count.
+// It then computes the cell count *again* from N into `D_8019249C`
+// (`3N(N+1)+1`) and the radius into `D_80192498` (`N << 6`).
+//
+// So writing N alone leaves two cell counts disagreeing -- the copied 469 and
+// the computed 817 -- and the water bobs and jitters, which is exactly what
+// forcing 16 without the set did. The set has to move with it.
+//
+// That is also why only the three sizes the cartridge itself ships are allowed:
+// a set exists for each, and there is no fourth to copy.
+constexpr uint32_t kParamTable = 0x000D4684;   // D_800D4684, 3 sets of 13 words
+constexpr uint32_t kParamLive = 0x00192460;    // D_80192460, the set in use
+constexpr int kParamWords = 13;
+
+struct WindowSetup { int cells; int set; };
+constexpr WindowSetup kWindowSetups[] = {
+    { 16, 0 },    // the opening and rider select
+    { 12, 1 },    // a one-player race
+    { 10, 2 },    // two players
+};
+
+// WR64_WATER_WINDOW=<cells> overrides it, 10, 12 or 16. Unset changes nothing.
+const WindowSetup* window_override() {
+    static const WindowSetup* setup = [] () -> const WindowSetup* {
+        const char* value = std::getenv("WR64_WATER_WINDOW");
+        if (value == nullptr || value[0] == 0) return nullptr;
+        const long parsed = std::strtol(value, nullptr, 10);
+        for (const WindowSetup& s : kWindowSetups) {
+            if (s.cells == parsed) return &s;
+        }
+        std::fprintf(stderr,
+                     "[water] WR64_WATER_WINDOW=%ld ignored: the game ships a"
+                     " parameter set for 10, 12 and 16 cells only\n", parsed);
+        std::fflush(stderr);
+        return nullptr;
+    }();
+    return setup;
 }
 
 // The game's own answer for the height at (x, z).
@@ -340,6 +427,17 @@ void publish(uint8_t* rdram, recomp_context* ctx, uint32_t display_list) {
     // the parameter block can hold means the field is not set up yet -- before a
     // race, between courses -- and the ring falls back to the game's own drawn
     // reach rather than trusting it.
+    // Written back every frame, because the game rewrites both whenever the
+    // scene changes. The two derived values (cell count, radius) are recomputed
+    // by the game from N, so only N and its parameter set are forced here.
+    if (const WindowSetup* wanted = window_override()) {
+        write_word(rdram, kWindowRadius, uint32_t(wanted->cells));
+        const uint32_t from = kParamTable + uint32_t(wanted->set) * kParamWords * 4;
+        for (int w = 0; w < kParamWords; ++w) {
+            write_word(rdram, kParamLive + uint32_t(w) * 4,
+                       read_word(rdram, from + uint32_t(w) * 4));
+        }
+    }
     const int32_t cells = static_cast<int32_t>(read_word(rdram, kWindowRadius));
     const bool window_valid = cells >= 2 && cells <= 64;
     const float full_to = window_valid ? waves_full_to(cells) : kSeamRadius;
@@ -369,7 +467,10 @@ void publish(uint8_t* rdram, recomp_context* ctx, uint32_t display_list) {
     // into the swell's own cycle first -- the components' periods multiply out
     // to a cycle far shorter than that, and the fold is exact in integers.
     static const bool no_swell = std::getenv("WR64_WATER_RING_NO_SWELL") != nullptr;
-    const uint32_t frame = read_word(rdram, kFrameCounter) % 222300u;  // 190*130*9
+    // 622440 is lcm(280, 190, 130, 90), the components' common period, so the
+    // fold is invisible in the surface and keeps the counter well inside the
+    // 2^24 where a float still holds whole numbers.
+    const uint32_t frame = read_word(rdram, kFrameCounter) % 622440u;
 
     // Radii grow geometrically, so each band covers more ground than the one
     // inside it for the same number of vertices. That is where the cost belongs:
@@ -419,6 +520,7 @@ void publish(uint8_t* rdram, recomp_context* ctx, uint32_t display_list) {
     int sampled = 0, flat = 0;
 
     const int taps = sample_taps();
+    const float width = filter_width();
     const float ratio = std::pow(outer / kInnerRadius, 1.0f / float(circles - 1));
     float radius = kInnerRadius;
     for (int c = 0; c < circles; ++c) {
@@ -434,8 +536,8 @@ void publish(uint8_t* rdram, recomp_context* ctx, uint32_t display_list) {
         // The quad this circle's vertices stand at the corner of: one chord
         // across, one band deep. Quarter-extents put the four taps at the
         // midpoints of its quadrants, which is a box filter over the footprint.
-        const float half_t = chord * 0.25f;
-        const float half_r = radius * (ratio - 1.0f) * 0.25f;
+        const float half_t = chord * 0.25f * width;
+        const float half_r = radius * (ratio - 1.0f) * 0.25f * width;
         for (int s = 0; s < kSectors; ++s) {
             const float angle = (6.2831853f * float(s)) / float(kSectors);
             const float ca = std::cos(angle), sa = std::sin(angle);
@@ -472,7 +574,9 @@ void publish(uint8_t* rdram, recomp_context* ctx, uint32_t display_list) {
             if (swell > 0.0f) {
                 y += far_swell(x, z, float(frame), chord) * swell;
             }
-            v.y = clamp_short(y);
+            // Carried in sixteenths of a world unit; the ring's own matrix
+            // scales Y back down. See kHeightScale.
+            v.y = clamp_short(y * float(kHeightScale));
         }
         radius *= ratio;
     }
@@ -488,11 +592,13 @@ void publish(uint8_t* rdram, recomp_context* ctx, uint32_t display_list) {
                          "[water] ring cost: %d circles to %.0f units, %d sampled +"
                          " %d flat vertices, %.3f ms a ring (mean of %d);"
                          " camera %.1f units a frame (mean), %.1f peak;"
-                         " live window %d cells = %.0f units%s, waves full to %.0f\n",
+                         " live window %d cells = %.0f units%s, waves full to %.0f,"
+                         " camera %.0f above water\n",
                          circles, outer, sampled, flat, total / 300.0 / 1000.0, 300,
                          delta_total / 300.0, delta_max,
                          cells, float(cells) * kCell,
-                         window_valid ? "" : " (REJECTED)", full_to);
+                         window_valid ? "" : " (REJECTED)", full_to,
+                         read_float(rdram, camera + kCameraY));
             std::fflush(stderr);
             total = 0;
             delta_total = 0.0;
