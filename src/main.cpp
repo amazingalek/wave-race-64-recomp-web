@@ -459,13 +459,26 @@ int main(int argc, char** argv) {
     // ever opened). The redirection happens before the console is released,
     // while the old handles are still valid to close.
     //
-    // It is opened with `_fsopen(..., _SH_DENYNO)` rather than `freopen_s`
-    // precisely so that the sharing is *not* denied. freopen_s takes an
-    // exclusive lock, which means the log cannot be read while the game is
-    // running -- and a log that can only be read after the game is closed is
-    // useless for exactly the case it exists for: watching what the port
-    // reports while someone plays. This port's debug tooling is meant to work
-    // in every build, and a diagnostic that requires quitting first does not.
+    // **The exclusive lock is a known wart and an attempted fix was reverted.**
+    // It means the log cannot be read while the game runs, which is exactly the
+    // case it exists for. Replacing freopen_s with `_fsopen(..., _SH_DENYNO)`
+    // and two `_dup2` calls makes the file readable and **stops the port
+    // logging anything after startup**: freopen re-initialises the CRT's stream
+    // -- buffering, mode, device flags -- where `_dup2` only swaps the
+    // descriptor underneath a `FILE` that still believes it is attached to a
+    // console. The file is created, the first writes land, and the rest go
+    // nowhere.
+    //
+    // It is worth noting how that passed a test: the check made was "can the
+    // log be opened while the game runs", which succeeded. That is not the
+    // symptom. The symptom is "does the log still contain what the port
+    // printed", and the giveaway is this function's own confirmation line
+    // below being absent from the file.
+    //
+    // A correct version opens the handle with CreateFile and
+    // FILE_SHARE_READ | FILE_SHARE_WRITE, wraps it with _open_osfhandle, and
+    // re-points the streams in a way that resets their state. Not attempted
+    // here, because a broken log is worse than an inconvenient one.
     {
         DWORD owners[2];
         if (GetConsoleWindow() != nullptr && GetConsoleProcessList(owners, 2) == 1) {
@@ -473,13 +486,11 @@ int main(int argc, char** argv) {
             std::error_code ec;
             std::filesystem::create_directories(log.parent_path(), ec);
             FILE* out = nullptr;
-            // Deliberately leaked: both standard streams are duplicated onto
-            // this descriptor and keep using it for the life of the process.
-            FILE* shared = _fsopen(log.string().c_str(), "w", _SH_DENYNO);
-            bool redirected = shared != nullptr &&
-                              _dup2(_fileno(shared), _fileno(stdout)) == 0 &&
-                              _dup2(_fileno(shared), _fileno(stderr)) == 0;
-            if (!redirected) {
+            bool redirected = freopen_s(&out, log.string().c_str(), "w", stdout) == 0;
+            if (redirected) {
+                redirected = _dup2(_fileno(stdout), _fileno(stderr)) == 0;
+            }
+            else {
                 // Keep both streams valid whatever happens; output is lost, the
                 // game is not.
                 freopen_s(&out, "NUL", "w", stdout);

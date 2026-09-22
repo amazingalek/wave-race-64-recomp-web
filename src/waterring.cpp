@@ -312,9 +312,23 @@ float far_swell(float x, float z, float frame, float chord) {
     for (const Swell& s : kSwell) {
         const float fade = footprint_fade(chord, s.wavelength);
         if (fade <= 0.0f) continue;
+        // Both terms are folded into one cycle before they meet.
+        //
+        // A sine does not care which cycle it is in, but a float does. Written
+        // as `2*pi * (along - frame/period)`, `along` is about one and
+        // `frame/period` climbs without bound -- a few minutes in it is in the
+        // thousands, where a float's spacing is 5e-4 cycles. A vertex moving 50
+        // units a frame changes `along` by about 4e-3, so its height advanced in
+        // eight steps a frame rather than smoothly, and the staircase grew as
+        // the session went on. It was invisible while the game's own waves were
+        // moving and plain on water holding a steady height.
+        //
+        // Subtracting whole cycles from either term changes nothing about the
+        // result and everything about the precision it is computed at.
         const float along = (x * s.dx + z * s.dz) / s.wavelength;
-        const float phase = 6.2831853f * (along - frame / s.period);
-        y += s.amplitude * std::sin(phase) * fade;
+        const float space = along - std::floor(along);
+        const float time = std::fmod(float(frame), s.period) / s.period;
+        y += s.amplitude * std::sin(6.2831853f * (space - time)) * fade;
     }
     return y;
 }
