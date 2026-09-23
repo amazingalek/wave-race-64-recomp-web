@@ -53,45 +53,17 @@ namespace wr64::waterring {
 // Twenty-four was tried first and the join showed.
 constexpr int kSectors = 48;
 
-// Radii, including the inner edge: bands of quads between circles, spaced so
-// they grow with distance, because a band at 5,000 units is a few pixels tall
-// and the cost belongs further in. The outermost fades out, so the ring meets
-// the sky's painted sea rather than ending at it.
-//
-// This is the **most** circles a ring can have, and sizes the arrays below.
-// Nine was the original, which over the far plane's 16,192 units put the outer
-// bands 3,400 and 5,000 units deep; thirteen keeps the same geometric spacing
-// but lands more of the circles where the sea is actually drawn. The count a
-// frame really uses is `Ring::circles`, so it can be turned back down without
-// rebuilding -- see `WR64_WATER_RING_BANDS`.
-constexpr int kCircles = 13;
+// Radii, including the inner edge. Eight bands of quads between nine circles,
+// spaced so they grow with distance: the far bands cover far more ground for
+// the same vertex count, which is where the cost has to go. The outermost two
+// fade out, so the ring meets the sky's painted sea rather than ending at it.
+constexpr int kCircles = 9;
 
 constexpr int kVertexCount = kSectors * kCircles;
 
-// How much finer than a world unit the ring's heights are carried.
-//
-// A Vtx holds s16 coordinates, so a vertex standing in world space has its
-// height rounded to a whole unit. The game's own patch can live with that: its
-// vertices sit *at* lattice points, so they do not resample as the camera moves
-// and the rounding is a fixed error. The ring's vertices slide continuously,
-// which turns the same rounding into a **1-unit staircase walked at 20 Hz** --
-// and against a far swell whose whole amplitude is about four units, that is a
-// quarter of the wave. It is the jitter that survived both the distance taper
-// and a footprint filter, neither of which can help: filtering lowers the
-// signal's variance and leaves the step size exactly where it was.
-//
-// So the heights are carried pre-multiplied by this, and the ring's own model
-// matrix -- which it already had, and which was an identity -- scales Y back
-// down by the same factor. Sixteen gives a sixteenth of a world unit, and the
-// worst height the field can hold (+/-128 units, plus the course's water level)
-// stays far inside an s16.
-constexpr int kHeightScale = 16;
-
-// One vertex, exactly as a Vtx holds it: x and z in world units, y in
-// sixteenths of one (see kHeightScale). The game's own water is drawn under an
-// identity model matrix with world-space vertices and this is drawn under a
-// matrix that differs from identity only in Y, so the two stand in the same
-// world -- and 16,000 units fits an int16.
+// One vertex, in world space, exactly as a Vtx holds it. The game's own water
+// is drawn under an identity model matrix with world-space vertices, so this
+// can be too -- and 6,000 units fits an int16 with room to spare.
 struct Vertex {
     int16_t x, y, z;
 };
@@ -102,16 +74,6 @@ struct Ring {
     // it drew without recomputing it.
     float inner;
     float outer;
-    // The centre the circles are drawn around (the camera) and each circle's
-    // radius, so the rewriter can move the inner edge onto the patch's own
-    // outline without guessing where the other circles are.
-    float cx, cz;
-    float radius[kCircles];
-    // How many of those circles this ring actually uses, 2 to kCircles. The
-    // emitter draws `circles - 1` bands and fades the last one, so a ring is
-    // described entirely by this and the radii above; nothing downstream reads
-    // kCircles to decide what was laid out.
-    int circles;
 };
 
 // Claimed by the display-list rewriter on the graphics thread, by the same list
@@ -121,12 +83,5 @@ const Ring* claim(uint32_t display_list);
 // WR64_NO_WATER_RING=1 switches it off, as CONTRIBUTING.md asks of anything that
 // could make a machine worse.
 bool enabled();
-
-// The radius, in 64-unit lattice cells, of the window the game is simulating
-// water in this frame -- `D_80192494`. 16 on the opening and rider select, 12 in
-// a one-player race, 10 in two players, unless WR64_WATER_WINDOW has forced it.
-// The display-list rewriter reads this to decide which of the game's four baked
-// water meshes to hand the microcode; see Walker::water_mesh_for.
-int window_cells();
 
 }  // namespace wr64::waterring

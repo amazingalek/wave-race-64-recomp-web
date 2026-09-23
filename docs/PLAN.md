@@ -337,7 +337,8 @@ What is already established, and is not to be re-derived:
 raised: no camera-centred edge in motion; issue #12's cutoff either gone or
 recorded with a measurement saying what still limits it; the hand-over jump at a
 world point no worse than before the change; frame rate unchanged on the laptop.
-*Met, in 1.0.3's builds. Issue #19's edge is confirmed gone in play and issue
+*Reopened: 1.0.3 was withdrawn (Southern Island unplayable) and its water code
+reverted; see PORTING.md, *1.0.3 withdrawn*.* Previously: *Met, in 1.0.3's builds. Issue #19's edge is confirmed gone in play and issue
 #12's cutoff is answered -- the sea reaches the far plane and carries a swell
 the whole way. Neither was attributed to a single change, which `PORTING.md`
 §7 records rather than papers over.*
@@ -438,6 +439,11 @@ for every performance change; the hand-over jump at a world point no worse than
 before; and `WATER.md` agreeing with the code.
 
 ### 11 — Water that is correct, not larger
+
+> **1.0.3 withdrawn.** Every water code commit from phases 10-11 was reverted
+> after Southern Island became unplayable (first bad commit `542d717`; cause not
+> explained -- PORTING.md, *1.0.3 withdrawn*). Before this phase resumes, the
+> work comes back one commit at a time, each raced on every course.
 
 Phase 10 ended with a decision: the simulated window reaches 16 cells, which is
 where the cartridge's own data ends, and **going further is not worth its cost**.

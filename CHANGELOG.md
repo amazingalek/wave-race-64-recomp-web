@@ -8,7 +8,14 @@ Versions follow [semantic versioning](https://semver.org) loosely: while the
 project is below 1.0, the minor number moves when something a player would
 notice changes.
 
-## [1.0.3](docs/releases/1.0.3.md) — Water
+## [1.0.3](docs/releases/1.0.3.md) — Water (withdrawn)
+
+**Withdrawn.** Released too soon: Southern Island became unplayable, with the
+water standing higher than it should. The GitHub release and its tag were
+removed and the water code went back to 1.0.2's. The macOS build fixes (PRs
+#23-#25) and the RT64 water-normals bounds check stayed. The notes below
+describe what 1.0.3 contained.
+
 
 - **The distant sea has waves all the way to the horizon.** It used to fade out
   around 7,770 units of the 16,192 the draw distance reaches, because the ring's

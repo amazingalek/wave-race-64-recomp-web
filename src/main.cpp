@@ -24,7 +24,6 @@
 #if defined(_WIN32)
 #   include <crtdbg.h>
 #   include <io.h>
-#   include <share.h>   // _SH_DENYNO: the log stays readable while the game runs
 #   define WIN32_LEAN_AND_MEAN
 #   include <windows.h>
 #elif defined(__APPLE__)
@@ -451,34 +450,14 @@ int main(int argc, char** argv) {
     // state transcript, the frame-rate lines and any crash report all land in
     // it. Started from a shell, or with output redirected, nothing changes.
     //
-    // The file is opened once and both streams are pointed at its descriptor.
-    // Opening it a second time for stderr fails, because it is opened without
-    // sharing -- and a failed freopen_s leaves the stream closed, so the port's
-    // first message to stderr then hit a closed stream, which the C runtime
-    // treats as a fatal invalid parameter (exit 0xC0000409, before the window
-    // ever opened). The redirection happens before the console is released,
-    // while the old handles are still valid to close.
-    //
-    // **The exclusive lock is a known wart and an attempted fix was reverted.**
-    // It means the log cannot be read while the game runs, which is exactly the
-    // case it exists for. Replacing freopen_s with `_fsopen(..., _SH_DENYNO)`
-    // and two `_dup2` calls makes the file readable and **stops the port
-    // logging anything after startup**: freopen re-initialises the CRT's stream
-    // -- buffering, mode, device flags -- where `_dup2` only swaps the
-    // descriptor underneath a `FILE` that still believes it is attached to a
-    // console. The file is created, the first writes land, and the rest go
-    // nowhere.
-    //
-    // It is worth noting how that passed a test: the check made was "can the
-    // log be opened while the game runs", which succeeded. That is not the
-    // symptom. The symptom is "does the log still contain what the port
-    // printed", and the giveaway is this function's own confirmation line
-    // below being absent from the file.
-    //
-    // A correct version opens the handle with CreateFile and
-    // FILE_SHARE_READ | FILE_SHARE_WRITE, wraps it with _open_osfhandle, and
-    // re-points the streams in a way that resets their state. Not attempted
-    // here, because a broken log is worse than an inconvenient one.
+    // The file is opened once, for stdout, and stderr is pointed at the same
+    // descriptor. Opening it a second time for stderr fails: freopen_s opens
+    // without sharing, so the second open is refused with EACCES -- and a
+    // failed freopen_s leaves the stream closed, so the port's first message
+    // to stderr then hit a closed stream, which the C runtime treats as a
+    // fatal invalid parameter (exit 0xC0000409, before the window ever opened).
+    // The redirection also happens before the console is released, while the
+    // old handles are still valid to close.
     {
         DWORD owners[2];
         if (GetConsoleWindow() != nullptr && GetConsoleProcessList(owners, 2) == 1) {

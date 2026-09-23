@@ -1921,6 +1921,10 @@ surge described above.
 distance ahead, travelling with the camera, on every course and worst on rough
 water. Present at Draw Distance **Original**. Absent in 0.9.0, present in 1.0.2.
 
+**Open again: 1.0.3 was withdrawn** and the code that made this go away was
+reverted with it (see *1.0.3 withdrawn* below). What follows is what 1.0.3
+recorded.
+
 **Resolved, and the cause was never isolated.** Confirmed gone in play after the
 far-water work below. What is worth recording is what it was *not*:
 `fit_ring_to_patch`, the mechanism written specifically to fix this, is **off**
@@ -1993,6 +1997,46 @@ and slot *i* stays continuous.
 - **Lesson:** geometry a port adds outside the game's own can make the game's
   own boundary conditions visible for the first time. The cartridge's flat
   border was never wrong; it was never seen.
+
+### 1.0.3 withdrawn: Southern Island regression, attributed but not explained
+
+**Symptom:** Southern Island unplayable in 1.0.3, the water standing higher than
+it should. Not in 1.0.2. 1.0.3's release and tag were removed and every water
+code commit below was reverted; the code is 1.0.2's.
+
+Bisected by the player driving the course, one build per step:
+
+| Build | Southern Island |
+|---|---|
+| 1.0.2 package | fine |
+| 1.0.3 with `WR64_NO_WATER_RING=1` (and the 16-cell window removed) | fine |
+| 1.0.3 with the 16-cell window removed | broken |
+| `1dbfe6a`, `fc91b0b` | broken |
+| `542d717` (first ring commit after 1.0.2) | broken |
+
+So the first bad commit is `542d717` (*Carry the ring's waves only as far as the
+game simulates water*), and the ring is necessary for the symptom.
+
+**What does not fit:** read line by line, `542d717` writes no game state. It
+reads RDRAM, calls `func_8004D30C` (whose only writes are its own stack frame,
+below the live `sp`; its callee `0x800C7010` is `sqrtf`) fewer times than 1.0.2
+did, and hands vertices to the rewriter, which writes only its scratch at
+`0x80700000`+. When the bisect and the code disagree, that is the finding.
+Unchecked before the revert:
+
+- whether "broken" is the **physics** or the **picture** -- the ring drawn above
+  the real water somewhere on the course would read as flooding. `542d717`
+  also changed what is drawn: 13 bands instead of 9, only the outermost fading,
+  waves damped past the simulated window;
+- the baseline: the good side was the 1.0.2 *package*, not the build tree at
+  `542d717`'s parent (`2d67c19`), which also carries the RT64 patch from `a2fbe70`.
+
+The 16-cell window (`7509e3f`, the only 1.0.3 change that wrote game state) was
+the first suspect and is **not** the cause on its own: with it removed the
+symptom stayed. It is still a gameplay change -- see the next section.
+
+- **Lesson:** a Draw Distance or water-quality change gets a race on every
+  course before it ships, not only on the course it was tuned on.
 
 ### Changing a number the game sets up atomically
 
