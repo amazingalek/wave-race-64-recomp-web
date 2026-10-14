@@ -656,3 +656,89 @@ keeping up with the game -- a race that keeps dropping from 30 to 20 says so
 each time. The second is what the Framerate setting resolved to. With Display
 selected on a 60 Hz panel the menus are presented at three times the game's
 rate and a race at twice; a 144 Hz panel gets 144 either way.
+
+## The web page
+
+This fork's `main` branch also builds with [Emscripten](https://emscripten.org) into a page, `WaveRace64Recomp.html`,
+that draws through WebGPU. `lib/RT64`, `lib/N64ModernRuntime` and `lib/RecompFrontend` are this port's own, at the
+same commits, and [N64Recomp-browser](https://github.com/amazingalek/N64Recomp-browser) (`lib/N64Recomp-browser`)
+patches their checkouts with the web support and makes the game a page. Mods and Quit are off on the page.
+
+The port's own patch scripts then go on top, as for the desktop. `tools/web_patch.sh` does both in that order, from
+clean submodules, so it can be run again at any time. The one script that meets the web support,
+`tools/patch_rt64_water.py`, sees it in and applies `tools/patches/rt64-water-web.patch`: the same water renderer, its
+shaders built as WGSL like the rest of RT64's on the page. The desktop build doesn't need the web patches, and a
+checkout patched for the page builds the desktop game too.
+
+With the reference decompilation in `reference/wr64-decomp` (the page was built with its commit 7784087) and your
+dump beside it, on Linux (or WSL) with the Emscripten SDK installed and activated, [naga](https://github.com/gfx-rs/wgpu/tree/trunk/naga)
+on `PATH` (`cargo install naga-cli`), and `spirv-opt` on `PATH` (SPIRV-Tools, `apt install spirv-tools`; without it
+the prebuilt shaders below come out several times the size):
+
+```bash
+bash tools/web_patch.sh
+python3 tools/generate_game.py "Wave Race 64 (USA) (Rev A).z64"   # the recompiler from the patched N64Recomp
+embuilder build sdl2-mt freetype-legacysjlj                        # once
+emcmake cmake -S . -B build-web -G Ninja -DCMAKE_BUILD_TYPE=Release
+cmake --build build-web --target WaveRace64Recomp
+```
+
+The generated code is the same for both builds; the patched N64Recomp's `funcs.h` declares every function it calls,
+which a WebAssembly build needs. Put [ccache](https://ccache.dev) on `PATH` when you configure and keep the build dir
+inside the checkout, and a second build compiles nothing it has compiled before; `-DN64RECOMP_BROWSER_FAST_LINK=ON`
+links in seconds instead of minutes, for trying something, not for a page people play.
+
+`build-web` then holds `WaveRace64Recomp.html`, `.js`, `.wasm`, `.data` and `coi_serviceworker.js`. The page needs a
+browser with WebGPU and must be cross-origin isolated: serve the folder with `Cross-Origin-Opener-Policy: same-origin`
+and `Cross-Origin-Embedder-Policy: require-corp`, or on a host that can't set headers, as is, and
+`coi_serviceworker.js` sets them after one reload. The player picks their dump in the launcher; it, the settings and
+the saves are kept in the browser's IndexedDB for that origin. Sound goes through N64Recomp-browser's
+`frontend/audio_output.h`, an AudioWorklet reading a ring in the page's memory, not SDL's queue on the page's busy
+main thread.
+
+The page builds the shaders the game draws with from `src/rt64_shaders.txt`, specialized and run through `spirv-opt`
+when the page is built, so no scene draws with the slow ubershader: 139 shader descriptions, 100 pipelines. The list is
+in sections: section 0 (63 descriptions: the launcher, the title and the menus to course select, which every visit
+draws), then the attract demo, each of the nine courses, a Championship race with the other riders, and Stunt Mode.
+In Chrome the whole list is built behind the game from its first frame, and the game waits only when a frame wants 4
+or more of a section's shaders that aren't built yet, under a small "Preparing graphics" indicator in a corner.
+Firefox builds a pipeline in line with the rest of its GPU work, so there section 0 is built before the game passes
+its first frame and each other section when the game first draws with its shaders, the game waiting. A shader the
+list misses is built behind the game, and the page remembers it and builds it with its section on the next visit.
+
+The list is recorded by code, not by hand: `bash tools/record_shaders.sh build-web <your dump>` (its header says how)
+plays `tools/shader_plan.json` in headless Chrome, a page load a section, in about 17 minutes; then build the page
+again. The plan passes the menus by pressing until the game's state (`gGameState`, 0x800DAB24) says the next screen is
+up, puts each course's place in the course select cursor, and holds the gas while `tools/autopilot.js` steers for the
+next buoy on the side it is passed, turning off a wall it has run into, and keeps the countdown that retires a rider
+off the course from running out. 2P VS isn't recorded: it needs a second pad.
+
+RT64's render to RAM, which draws each frame a second time at the N64's size and reads it back into RDRAM, is off on
+the page (`src/frontend.cpp`; the desktop keeps RT64's default). In a browser the readback makes every display list
+wait for the GPU process, and the game's CPU never reads a frame: the one place it would, `sys_main.c`'s copy of the
+last frame in display modes 1 and 2, is never reached, since nothing sets `D_800DAB1C` to either. Watched through the
+menus, a race and its pause menu on the page, the mode stayed 0 throughout, and the pause dims the live scene.
+
+Played from the published page (main b4bcb9d, N64Recomp-browser 421f902) on 2026-10-14, RTX 2070, a cold profile
+each, one page at a time (the desktop's own browser open beside it, the GPU 36-42% busy before the runs, the host's
+CPU 15-22%), by `tools/shader_plan.json`'s `sunset` section with N64Recomp-browser's `tools/play_page.mjs`: the
+launcher, Load ROM, the title, the menus to course select and 50 s of Sunset Bay, with sound and no WebGPU errors.
+
+```
+                     wait (s)                  presents/s   GPU busy, W   GPU process, browser (cores)
+Chrome 155 headless  1.8 (14, the boot)        59.6         27%  47       0.21  0.76
+Firefox 158          3.5 (50, the boot),       59.6         28%  47       0.30  0.93
+                     0.5 (13, Sunset Bay)
+at 3840x2000, the stand-in for a laptop's integrated graphics:
+Chrome 155 headless  1.8 (14)                  59.6         36%  54       0.22  0.77
+Firefox 158          4.2 (50), 0.5 (13)        59.4         36%  77       0.36  1.01
+```
+
+Sound was short only in the boot's wait (1,161-3,553 frames), and once in Firefox at 3840x2000 for about 0.2 s more
+on the way into the race (9,792 frames). Chrome builds the rest of the list behind the game: all 100 pipelines were
+built 3-4 s after its boot wait ended.
+
+Render to RAM on against off, the same page built both ways, headless Chrome 155, the same race, two runs each
+interleaved on that host: 59.4 against 59.6 presents a second, the GPU process 0.23 against 0.20-0.24 cores, the
+browser 0.79-0.83 against 0.73-0.82. At the game's 20 frames a second the readback costs a list's wall time, not
+frames or CPU, so this only shows on a slower machine.
