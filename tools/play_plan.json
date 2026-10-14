@@ -1,0 +1,9 @@
+{
+  "header": ["The page's plan for N64Recomp-browser's tools/play_page.mjs: the launcher, Load ROM on a new profile,",
+             "Start Game, then the logos, the title and the attract demo, which play by themselves."],
+  "page": "WaveRace64Recomp.html",
+  "load": [["until", "Device Name", 60000], ["wait", 6000]],
+  "setup": [["rom", 628, 364], ["wait", 4000]],
+  "start": [["click", 628, 364]],
+  "play": [["wait", 60000]]
+}

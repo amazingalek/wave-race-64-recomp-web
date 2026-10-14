@@ -39,6 +39,16 @@ from pathlib import Path
 REPO = Path(__file__).resolve().parent.parent
 SUBMODULE = REPO / "lib" / "RT64"
 PATCH = REPO / "tools" / "patches" / "rt64-water.patch"
+# The same patch made against RT64 with N64Recomp-browser's web patch already in
+# (the web page's build, docs/BUILDING.md): both change the shader build's
+# commands in CMakeLists.txt and the shader uploads in
+# rt64_framebuffer_renderer.cpp, so the plain one stops there. Made by merging
+# the two and taking the difference from the web-patched tree. One change of
+# its own: WaterSprayVS.hlsl tests for a finite value as abs(x) <= FLT_MAX, not
+# with isfinite(), which dxc makes a || of bool vectors that WGSL hasn't got
+# (naga stops on it). A NaN or an infinity fails both tests alike.
+WEB_PATCH = REPO / "tools" / "patches" / "rt64-water-web.patch"
+WEB_MARKER = SUBMODULE / "src" / "shaders" / "WebGPU.hlsli"
 NAME = "RT64 water renderer"
 
 
@@ -314,7 +324,7 @@ def main() -> int:
     if FB_RENDERER.is_file() and GUARD_MARKER in FB_RENDERER.read_text(encoding="utf-8"):
         print(f"{NAME}: diff and transform guard already applied")
     else:
-        result = apply_patch(SUBMODULE, PATCH, NAME)
+        result = apply_patch(SUBMODULE, WEB_PATCH if WEB_MARKER.is_file() else PATCH, NAME)
         if result == 0:
             result = apply_guard()
         if result != 0:

@@ -139,6 +139,16 @@ std::unique_ptr<ultramodern::renderer::RendererContext> create_render_context(
     // it means; it no longer decides whether the debug menu can be opened.
     (void)developer_mode;
     wr64::inspector::install();
+#ifdef __EMSCRIPTEN__
+    // A page: RT64's render to RAM (drawing each frame again at the N64's size
+    // and reading it back into RDRAM) is off. In a browser the readback makes
+    // every display list wait 5-6 ms for the GPU process, and the game's CPU
+    // never reads a frame: the one place it would, the copy of the last frame
+    // in sys_main.c's display modes 1 and 2, is never reached, since nothing
+    // sets D_800DAB1C to either (the pause menu, the results and every other
+    // screen run in mode 0). The desktop keeps RT64's default.
+    recompui::renderer::set_render_to_ram(false);
+#endif
     return std::make_unique<RewritingContext>(
         rdram, recompui::renderer::create_render_context(
                    rdram, window_handle, presentation_mode(), true));
@@ -202,12 +212,17 @@ void build_launcher(recompui::LauncherMenu* menu) {
     options->add_start_game_or_load_rom_option("Load ROM", "Start Game");
     options->add_setup_controls_option("Controls");
     options->add_settings_option("Settings");
+#ifndef __EMSCRIPTEN__
+    // Not on a page: mods a player adds are off there, and Quit left a black
+    // canvas (N64Recomp-browser's RecompFrontend patch leaves both out of the
+    // default launcher for the same reasons).
     options->add_mods_option("Mods");
     // Closing the window works, but a menu the pad can reach should not need a
     // mouse to leave. add_exit_option calls ultramodern::quit(), which unwinds
     // the game thread and the renderer in order rather than tearing the process
     // down, so a race in progress saves its records on the way out.
     options->add_exit_option("Quit");
+#endif
 }
 
 }  // namespace
@@ -636,7 +651,14 @@ void init() {
     //
     // HUD Placement is left at the library's default; the display-list rewriter
     // anchors the race HUD to the frame's edges whenever it is not Original.
+    //
+    // Not on a page: the canvas already fills the browser's window, and a
+    // browser goes fullscreen only from a click or a key the player made.
+#if defined(__EMSCRIPTEN__)
+    if (false) {
+#else
     if (first_run) {
+#endif
         auto& graphics_config = recompui::config::get_graphics_config();
         graphics_config.set_option_value(
             recompui::config::graphics::options::wm_option,

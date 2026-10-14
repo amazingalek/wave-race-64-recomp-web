@@ -88,7 +88,14 @@ ignored = [
     "func_800CB0A8",
     # Replaced by patches/dma.cpp with a synchronous transfer, so loaded code is
     # in place before the call returns rather than after a queue wait.
-    "game_dma_copy"
+    "game_dma_copy",
+    # The RSP's graphics and audio microcode, not CPU code (N64Recomp ignores
+    # rspbootTextStart itself). splat's textbin labels them as functions, and an
+    # ELF built with some binutils (the web page's Docker image) gives N64Recomp
+    # them as such, so it recompiles them as MIPS and stops ("Negative offset for
+    # sw to stack", "Unhandled cop0 register"). Nothing on the CPU calls them.
+    "gspFast3DTextStart",
+    "aspMainTextStart"
 ]
 
 # The course buoys: every one in view drawn, when Draw Distance is above Original.

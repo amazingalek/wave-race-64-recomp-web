@@ -90,6 +90,10 @@ RT64Context::RT64Context(uint8_t* rdram, ultramodern::renderer::WindowHandle win
     core.window.view = window_handle.view;
 #elif defined(_WIN32)
     core.window = window_handle.window;
+#elif defined(__EMSCRIPTEN__)
+    // A page: plume's WebGPU window is the canvas's CSS selector.
+    (void)window_handle;
+    core.window = "#canvas";
 #else
     core.window = window_handle;
 #endif

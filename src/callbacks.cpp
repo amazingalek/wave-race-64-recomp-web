@@ -28,6 +28,12 @@
 #   include <SDL_metal.h>
 #   include <pthread.h>
 #endif
+#if defined(__EMSCRIPTEN__)
+// On a page, sound plays through N64Recomp-browser's AudioWorklet output in
+// place of SDL's queue: Emscripten's SDL2 plays from the page's thread, where
+// WebGPU's work runs, and its sound breaks up whenever that thread is busy.
+#   include "audio_output.h"
+#endif
 
 #include <ultramodern/ultramodern.hpp>
 #include <ultramodern/input.hpp>
@@ -570,12 +576,43 @@ uint32_t preferred_device_rate() {
     return (known && spec.freq > 0) ? static_cast<uint32_t>(spec.freq) : 48000u;
 }
 
+#if defined(__EMSCRIPTEN__)
+// The page's output is opened once and stays open: a reopen only reconfigures
+// the conversion. g_audio_device is then just "open".
+uint32_t g_web_audio_rate = 0;
+
+void close_audio_device() {
+    g_audio_device = 0;
+}
+
+size_t queued_device_frames() {
+    return n64recomp_browser::audio::queued_frames();
+}
+
+void queue_device_frames(const int16_t* samples, size_t sample_count) {
+    static std::vector<float> floats;
+    floats.resize(sample_count);
+    for (size_t i = 0; i < sample_count; ++i) {
+        floats[i] = samples[i] * (1.0f / 32768.0f);
+    }
+    n64recomp_browser::audio::queue(floats.data(), sample_count / kAudioChannels);
+}
+#else
 void close_audio_device() {
     if (g_audio_device != 0) {
         SDL_CloseAudioDevice(g_audio_device);
         g_audio_device = 0;
     }
 }
+
+size_t queued_device_frames() {
+    return SDL_GetQueuedAudioSize(g_audio_device) / kBytesPerFrame;
+}
+
+void queue_device_frames(const int16_t* samples, size_t sample_count) {
+    SDL_QueueAudio(g_audio_device, samples, static_cast<Uint32>(sample_count * sizeof(int16_t)));
+}
+#endif
 
 // Opens (or reopens) the output device at the game's current sample rate.
 //
@@ -588,6 +625,25 @@ void close_audio_device() {
 // speed.
 bool open_audio_device() {
     close_audio_device();
+
+#if defined(__EMSCRIPTEN__)
+    // The page's audio context's rate, converted to by the port as on the
+    // desktop.
+    if (g_web_audio_rate == 0) {
+        g_web_audio_rate = n64recomp_browser::audio::open(kAudioChannels);
+    }
+    g_audio_device = 1;
+    g_device_frequency = g_web_audio_rate;
+    g_queue_headroom_frames = static_cast<uint32_t>(
+        uint64_t(g_audio_frequency) * queue_headroom_ms() / 1000u);
+    std::fprintf(stderr, "[wr64] audio output open at %u Hz, %d channels,"
+                         " holding %u of the game's frames (%u ms) in hand\n",
+                 g_device_frequency, kAudioChannels, g_queue_headroom_frames, queue_headroom_ms());
+    wr64::resample::configure(g_audio_frequency, g_device_frequency);
+    wr64::audiodiag::device_opened(g_device_frequency, static_cast<uint32_t>(device_period_frames()),
+                                   g_device_frequency, 0u);
+    return true;
+#endif
 
     if (SDL_InitSubSystem(SDL_INIT_AUDIO) != 0) {
         std::fprintf(stderr, "[wr64] SDL_InitSubSystem(AUDIO) failed: %s\n", SDL_GetError());
@@ -710,11 +766,10 @@ void queue_samples(int16_t* audio_data, size_t sample_count) {
     // variable is set, and what is dumped is now the finished article -- after
     // the conversion, exactly what the sound card receives.
     wr64::audiodiag::queued(
-        static_cast<uint32_t>(SDL_GetQueuedAudioSize(g_audio_device) / kBytesPerFrame),
+        static_cast<uint32_t>(queued_device_frames()),
         converted.data(), converted.size());
 
-    SDL_QueueAudio(g_audio_device, converted.data(),
-                   static_cast<Uint32>(converted.size() * sizeof(int16_t)));
+    queue_device_frames(converted.data(), converted.size());
 
     // A silent port and a working one queue samples equally often, so the
     // count alone proves nothing; the amplitude is what separates the microcode
@@ -741,7 +796,7 @@ size_t get_frames_remaining() {
         // buffer that will never empty.
         return 0;
     }
-    const size_t device_frames = SDL_GetQueuedAudioSize(g_audio_device) / kBytesPerFrame;
+    const size_t device_frames = queued_device_frames();
     // The real depth, in device frames, goes to the diagnostics: that is the unit
     // the queue is in and the unit the device consumes in. No-op unless
     // WR64_AUDIO_STATS is set.

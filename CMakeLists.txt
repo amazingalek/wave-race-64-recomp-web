@@ -19,6 +19,39 @@ set(CMAKE_CXX_EXTENSIONS OFF)
 set(CMAKE_C_STANDARD 11)
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
+# With Emscripten (emcmake cmake), the game builds as a page for a browser,
+# WaveRace64Recomp.html, through lib/N64Recomp-browser/frontend: RT64 and the
+# menus on WebGPU, mods off (docs/BUILDING.md, "The web page"). The runtime, the
+# recompiled code and the frontend are always on there.
+if(EMSCRIPTEN)
+    set(WR64_WITH_RUNTIME ON CACHE BOOL "" FORCE)
+    set(WR64_WITH_RECOMPILED ON CACHE BOOL "" FORCE)
+    set(WR64_WITH_FRONTEND ON CACHE BOOL "" FORCE)
+    # lib/RT64, lib/N64ModernRuntime and lib/RecompFrontend with
+    # N64Recomp-browser's web support patched in before this port's own patches,
+    # which tools/web_patch.sh does (docs/BUILDING.md): the port's RT64 water
+    # patch has a version for a web-patched RT64, so the order matters, and
+    # patching here at configure time would come after it.
+    if(NOT EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/lib/RT64/src/shaders/WebGPU.hlsli")
+        message(FATAL_ERROR "The web support isn't patched in: run bash tools/web_patch.sh first (docs/BUILDING.md)")
+    endif()
+    # Threads are pthreads (SharedArrayBuffer), and the runtime ends a game
+    # thread by throwing. -msimd128 is wasm SIMD and -mtail-call wasm's tail
+    # calls, which every browser with WebGPU has: with it the recompiled code's
+    # jumps to other functions are return_calls, not calls that grow the stack.
+    add_compile_options(-pthread -fwasm-exceptions -msimd128 -mtail-call)
+    # With -msimd128 xxHash would take its NEON path through Emscripten's
+    # arm_neon.h, which doesn't compile in C++ there. XXH_HAS_INCLUDE is used for
+    # nothing else, so XXH3 stays scalar.
+    add_compile_options("-DXXH_HAS_INCLUDE(x)=0")
+    add_link_options(-pthread -fwasm-exceptions -mtail-call)
+    # ccache when it is on PATH, for shorter builds; before RT64 and the runtime.
+    include("${CMAKE_CURRENT_SOURCE_DIR}/lib/N64Recomp-browser/frontend/build_speed.cmake")
+    # The shaders the page specializes at build time and builds before the game
+    # draws with them (src/rt64_shaders.txt says why and how it was recorded).
+    set(RT64_PREBUILT_SHADER_LIST "${CMAKE_CURRENT_SOURCE_DIR}/src/rt64_shaders.txt")
+endif()
+
 if(NOT CMAKE_BUILD_TYPE AND NOT CMAKE_CONFIGURATION_TYPES)
     set(CMAKE_BUILD_TYPE RelWithDebInfo CACHE STRING "" FORCE)
 endif()
@@ -81,7 +114,8 @@ endif()
 # this project needs it in its own scope because src/callbacks.cpp includes
 # SDL.h and creates the window. RT64 and RecompFrontend each run their own
 # find_package in their own directories.
-if(NOT WIN32)
+# With Emscripten SDL2 is Emscripten's port, which the page's link brings.
+if(NOT WIN32 AND NOT EMSCRIPTEN)
     find_package(SDL2 REQUIRED)
 endif()
 
@@ -113,13 +147,20 @@ if(WR64_WITH_RUNTIME)
     # compile against the X11 definition, and a target that compiled against
     # the wrong one would be an ABI mismatch at the call that passes the
     # handle across rather than an error.
-    if(UNIX AND NOT APPLE)
+    if(UNIX AND NOT APPLE AND NOT EMSCRIPTEN)
         set(RT64_SDL_WINDOW_VULKAN ON CACHE BOOL "" FORCE)
         add_compile_definitions(PLUME_SDL_VULKAN_ENABLED RT64_SDL_WINDOW_VULKAN)
     endif()
 
     add_subdirectory("${WR64_LIB_DIR}/RT64" EXCLUDE_FROM_ALL)
     add_subdirectory("${WR64_LIB_DIR}/N64ModernRuntime" EXCLUDE_FROM_ALL)
+
+    if(EMSCRIPTEN)
+        add_subdirectory("${WR64_LIB_DIR}/N64Recomp-browser/frontend" "${CMAKE_BINARY_DIR}/web_frontend")
+        # fmt 11.1 (N64Recomp's) leans on <cstdlib> arriving through other
+        # headers, which Emscripten's libc++ doesn't do.
+        target_compile_options(fmt PRIVATE -include cstdlib)
+    endif()
 endif()
 
 # RecompFrontend supplies the pieces every N64: Recompiled port needs and none
@@ -176,14 +217,16 @@ if(WR64_WITH_FRONTEND)
     # RT64 vendors all of them under contrib/dxc; this mirrors the selection
     # RT64 makes for itself in lib/RT64/CMakeLists.txt.
     set(WR64_RT64_DIR "${WR64_LIB_DIR}/RT64")
-    if(CMAKE_SYSTEM_PROCESSOR MATCHES "^(aarch64|arm64)$")
+    # The build machine's processor: DXC runs there, and for the page (wasm32)
+    # that isn't the target's.
+    if(CMAKE_HOST_SYSTEM_PROCESSOR MATCHES "^(aarch64|arm64)$")
         set(WR64_DXC_ARCH arm64)
     else()
         set(WR64_DXC_ARCH x64)
     endif()
-    if(WIN32)
+    if(CMAKE_HOST_WIN32)
         set(DXC "${WR64_RT64_DIR}/src/contrib/dxc/bin/x64/dxc.exe")
-    elseif(APPLE)
+    elseif(CMAKE_HOST_APPLE)
         set(DXC "${CMAKE_COMMAND}" -E env
             "DYLD_LIBRARY_PATH=${WR64_RT64_DIR}/src/contrib/dxc/lib/${WR64_DXC_ARCH}"
             "${WR64_RT64_DIR}/src/contrib/dxc/bin/${WR64_DXC_ARCH}/dxc-macos")
@@ -274,6 +317,14 @@ if(WR64_WITH_RECOMPILED)
     else()
         target_compile_options(wr64_recompiled PRIVATE /w)
     endif()
+
+    # WebAssembly checks a call's signature when it links and turns a call to an
+    # undeclared function into a trap, so with Emscripten that is an error in the
+    # recompiled code. N64Recomp-browser's N64Recomp declares everything its
+    # code calls in funcs.h.
+    if(EMSCRIPTEN)
+        target_compile_options(wr64_recompiled PRIVATE -Werror=implicit-function-declaration)
+    endif()
 endif()
 
 # ---------------------------------------------------------------------------
@@ -346,7 +397,7 @@ target_compile_definitions(WaveRace64Recomp PRIVATE
 
 # src/callbacks.cpp creates the window and reads the event queue, so the port
 # links SDL2 itself rather than relying on it arriving through RT64.
-if(NOT WIN32)
+if(NOT WIN32 AND NOT EMSCRIPTEN)
     if(TARGET SDL2::SDL2)
         target_link_libraries(WaveRace64Recomp PRIVATE SDL2::SDL2)
     else()
@@ -487,6 +538,24 @@ if(WR64_WITH_FRONTEND)
                 "${CMAKE_CURRENT_SOURCE_DIR}/assets/promptfont/LICENSE.txt"
                 "${WR64_ASSET_DIR}/promptfont"
         COMMENT "Staging the frontend's stylesheet and fonts")
+endif()
+
+# The page (lib/N64Recomp-browser/frontend), with the menus' assets in its .data
+# file, where the port looks for them: "assets/" beside the program, which on a
+# page is /. No ROM: the player picks theirs in the launcher, and it stays in the
+# browser.
+if(EMSCRIPTEN)
+    n64recomp_browser_frontend_page(WaveRace64Recomp)
+    set(WR64_RMLUI_ASSETS
+        "${WR64_LIB_DIR}/RecompFrontend/recompui/lib/RmlUi/Samples/assets")
+    foreach(asset recomp.rcss icons water promptfont/promptfont.ttf promptfont/LICENSE.txt)
+        target_link_options(WaveRace64Recomp PRIVATE
+            "SHELL:--preload-file ${CMAKE_CURRENT_SOURCE_DIR}/assets/${asset}@/assets/${asset}")
+    endforeach()
+    foreach(font LatoLatin-Regular.ttf LatoLatin-Bold.ttf LatoLatin-Italic.ttf NotoEmoji-Regular.ttf)
+        target_link_options(WaveRace64Recomp PRIVATE
+            "SHELL:--preload-file ${WR64_RMLUI_ASSETS}/${font}@/assets/${font}")
+    endforeach()
 endif()
 
 if(WR64_WITH_RECOMPILED)

@@ -7,3 +7,6 @@
 [submodule "lib/RecompFrontend"]
 	path = lib/RecompFrontend
 	url = https://github.com/N64Recomp/RecompFrontend.git
+[submodule "lib/N64Recomp-browser"]
+	path = lib/N64Recomp-browser
+	url = https://github.com/amazingalek/N64Recomp-browser
