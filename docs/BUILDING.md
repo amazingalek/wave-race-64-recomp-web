@@ -751,3 +751,9 @@ RTX 2070, 1256x645, a fresh profile each, the host's every core busy with other 
 attract demo, 60 s, with N64Recomp-browser's `tools/play_page.mjs`: headless Chrome 155 waited 2.8 s for 14 and then
 drew 59.6 presents a second (median), Firefox 158 waited 6.4 s for 50 and then drew 58.7. No WebGPU errors or exceptions
 in either.
+
+Played again from Pages, built on N64Recomp-browser 7277a2e (rt64-web 8bea892, tile copies reused from one display list
+to the next; main 6c784b1, gh-pages 4e0ad30) on 2026-10-15, RTX 2070, 1256x645, a fresh profile each, the host's every
+core busy with other work, the logos, the title and the attract demo, 60 s, with N64Recomp-browser's
+`tools/play_page.mjs`: headless Chrome 155 waited 3.0 s for 14 and then drew 59.3 presents a second (median), Firefox
+158 waited 5.9 s for 50 and then drew 59.4. Sound short only in the waits, no WebGPU errors or exceptions in either.
