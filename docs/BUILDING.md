@@ -677,7 +677,9 @@ the prebuilt shaders below come out several times the size):
 
 ```bash
 bash tools/web_patch.sh
-python3 tools/generate_game.py "Wave Race 64 (USA) (Rev A).z64"   # the recompiler from the patched N64Recomp
+bash tools/wsl_setup_splat.sh                                      # splat's Python environment (.venv), once
+bash tools/wsl_build_recompiler.sh                                 # N64Recomp and RSPRecomp, patched, in build-linux
+python3 tools/generate_game.py "Wave Race 64 (USA) (Rev A).z64"    # runs them
 embuilder build sdl2-mt freetype-legacysjlj                        # once
 emcmake cmake -S . -B build-web -G Ninja -DCMAKE_BUILD_TYPE=Release
 cmake --build build-web --target WaveRace64Recomp
