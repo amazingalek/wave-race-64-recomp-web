@@ -744,3 +744,10 @@ Render to RAM on against off, the same page built both ways, headless Chrome 155
 interleaved on that host: 59.4 against 59.6 presents a second, the GPU process 0.23 against 0.20-0.24 cores, the
 browser 0.79-0.83 against 0.73-0.82. At the game's 20 frames a second the readback costs a list's wall time, not
 frames or CPU, so this only shows on a slower machine.
+
+Played again from the page built on N64Recomp-browser d3b9031 (N64ModernRuntime-web f0e0884, RecompFrontend-web 75fe596,
+rt64-web f34b19c; main a0fda71, gh-pages a735120) on 2026-10-15, its files served locally with the cross-origin headers,
+RTX 2070, 1256x645, a fresh profile each, the host's every core busy with other work, the logos, the title and the
+attract demo, 60 s, with N64Recomp-browser's `tools/play_page.mjs`: headless Chrome 155 waited 2.8 s for 14 and then
+drew 59.6 presents a second (median), Firefox 158 waited 6.4 s for 50 and then drew 58.7. No WebGPU errors or exceptions
+in either.
