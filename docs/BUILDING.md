@@ -762,3 +762,9 @@ Played again from Pages, built on N64Recomp-browser v0.43.0 (main 11b8bc2), on 2
 profile each, one page at a time, the logos, the title and the attract demo with `tools/play_page.mjs`: headless Chrome
 155 waited 2.0 s for 14 and then drew 59.6 presents a second (median), Firefox 158 waited 3.6 s for 50 and then drew
 59.0. Sound short in the waits and for a moment in the attract demo (under 0.6% in all), no WebGPU errors.
+
+Played on N64Recomp-browser v0.46.0 (main 3b8b253 built with its pin moved there, served locally) on 2026-10-15, RTX
+2070, a fresh profile each, one page at a time, a host 14-27% busy, by `tools/play_plan.json` with
+`tools/play_page.mjs`: at 1256x645 headless Chrome 155 waited 1.9 s for 14 and drew 59.6 presents a second (median),
+Firefox 158 waited 3.2 s for 50 and drew 59.6; at 3840x2000 (`--play 25`) Chrome waited 2.0 s and drew 59.6, Firefox 3.3
+s and 59.6. Sound short in the waits and for a moment in the attract demo (under 0.5% in all), no WebGPU errors.
