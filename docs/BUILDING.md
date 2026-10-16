@@ -702,8 +702,8 @@ The page builds the shaders the game draws with from `src/rt64_shaders.txt`, spe
 when the page is built, so no scene draws with the slow ubershader: 139 shader descriptions, 100 pipelines. The list is
 in sections: section 0 (63 descriptions: the launcher, the title and the menus to course select, which every visit
 draws), then the attract demo, each of the nine courses, a Championship race with the other riders, and Stunt Mode.
-In Chrome the whole list is built behind the game from its first frame, and the game waits only when a frame wants 4
-or more of a section's shaders that aren't built yet, under a small "Preparing graphics" indicator in a corner.
+In Chrome the whole list is built in the background, and the game waits only when a frame wants 4 or
+more of a section's shaders that aren't built yet, under a small "Preparing graphics" indicator in a corner.
 Firefox builds a pipeline in line with the rest of its GPU work, so there section 0 is built before the game passes
 its first frame and each other section when the game first draws with its shaders, the game waiting. A shader the
 list misses is built behind the game, and the page remembers it and builds it with its section on the next visit.
