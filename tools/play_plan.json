@@ -1,8 +1,12 @@
 {
   "header": ["The page's plan for N64Recomp-browser's tools/play_page.mjs: the launcher, Load ROM on a new profile,",
-             "Start Game, then the logos, the title and the attract demo, which play by themselves."],
+             "Start Game, then the logos, the title and the attract demo, which play by themselves. Load ROM waits for",
+             "the shader list Chrome builds behind the launcher (a laptop's GPU busy with it took no click until it was",
+             "done); Firefox builds none there, and its line saying so is the one waited for. The 6 s after it are the plan's",
+             "earlier wait, which was enough off the desktop in both browsers."],
   "page": "WaveRace64Recomp.html",
-  "load": [["until", "Device Name", 60000], ["wait", 6000]],
+  "load": [["until", "Device Name", 60000], ["until", "RT64: all \\d+ prebuilt shaders built|once the game draws", 60000],
+           ["wait", 6000]],
   "setup": [["rom", 628, 364], ["wait", 4000]],
   "start": [["click", 628, 364]],
   "play": [["wait", 60000]]
