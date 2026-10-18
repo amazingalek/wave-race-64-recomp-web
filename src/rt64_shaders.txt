@@ -4,8 +4,11 @@
 # demo, then each course in Time Trials, reached by putting its place in the course select list in the cursor
 # (0x800DA9D0) before A, and raced 50 s with the gas held, steered by tools/autopilot.js for the next buoy, the
 # countdown that retires a rider who has left the course (standing +0x2E8, 0x801C2938 + 0x378 a rider) kept from
-# running out; then a Championship race on Sunny Beach with its three other riders, and Stunt Mode. 2P VS isn't
-# played: it needs a second pad.
+# running out; then a Championship race on Sunny Beach with its three other riders, and in a load of its own a Normal
+# Championship's first three races (Sunny Beach, Sunset Bay, Marine Fortress), each raced 30 s and then ended by
+# putting the rider on its last lap with every buoy taken and finished (standing +0x0, +0xC and +0x2F4), through each
+# finish and results to the screens a championship ends with when the rider doesn't qualify for the next race; and
+# Stunt Mode. 2P VS isn't played: it needs a second pad.
 0f0a4000 00882c3f fcffffff fffcf279 0a222208
 0f0a4000 00982c3f fc22ffff 1ffcfa38 0ccf540c
 00504240 00882c3f fc11c223 ff87ffff 088a0008
@@ -287,6 +290,16 @@ c8112078 0018acff fc127fff fffff238 0aaaaa0c
 0f0a4000 00182c3f fc327fff fffff838 08000008
 0c184240 00182c3f fc127fff fffff238 0bba4408
 0f0a4000 00000c3f fcffffff fffdf6fb 0800000b
+005041c8 00082cff fc129a25 ff37ffff 0ccb5400
+00504240 00000c3f fc119623 ff2fffff 0ccb540b
+00504240 00000c3f fcffffff fffcf279 0ccb540b
+00504240 00082cff fcffffff fffcf279 0ccb540c
+00552078 00002cff fcffffff fffdf6fb 0800000c
+00552078 00882c3f fcffffff fffcf279 088a0008
+00552078 00882c3f fcffffff fffe793c 0800000c
+00552230 00882c3f fcffffff fffe793c 08000004
+0f0a4000 00002c3f fcffffff fffdf6fb 0800000b
+0f0a4000 00080c3f fcffffff fffe793c 0800000c
 section stunt
 5f505240 00002cff fcffffff fffe793c 0800000b
 005041c8 00002cff fcffffff fffdf6fb 0800000b

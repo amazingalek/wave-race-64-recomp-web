@@ -699,9 +699,10 @@ the saves are kept in the browser's IndexedDB for that origin. Sound goes throug
 main thread.
 
 The page builds the shaders the game draws with from `src/rt64_shaders.txt`, specialized and run through `spirv-opt`
-when the page is built, so no scene draws with the slow ubershader: 139 shader descriptions, 100 pipelines. The list is
-in sections: section 0 (63 descriptions: the launcher, the title and the menus to course select, which every visit
-draws), then the attract demo, each of the nine courses, a Championship race with the other riders, and Stunt Mode.
+when the page is built, so no scene draws with the slow ubershader: 149 shader descriptions (100 pipelines for the
+139 recorded first). The list is in sections: section 0 (63 descriptions: the launcher, the title and the menus to
+course select, which every visit draws), then the attract demo, each of the nine courses, a Championship's races with
+the other riders, their results and how a championship ends, and Stunt Mode.
 In Chrome the whole list is built in the background, and the game waits only when a frame wants 4 or
 more of a section's shaders that aren't built yet, under a small "Preparing graphics" indicator in a corner.
 Firefox builds a pipeline in line with the rest of its GPU work, so there section 0 is built before the game passes
