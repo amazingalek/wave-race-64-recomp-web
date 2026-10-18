@@ -1178,7 +1178,13 @@ ultramodern::renderer::WindowHandle create_window(ultramodern::gfx_callbacks_t::
     int width = 320 * 4;
     int height = 240 * 4;
     Uint32 flags = SDL_WINDOW_RESIZABLE | SDL_WINDOW_ALLOW_HIGHDPI;
-#if defined(__APPLE__)
+#if defined(__EMSCRIPTEN__)
+    // On a page the window is the canvas, sized by the page in CSS pixels, which
+    // SDL follows. At the device's pixels a laptop at 200% drew four times the
+    // pixels, and its clicks landed where the launcher was not drawn: Load ROM
+    // opened no file picker.
+    flags &= ~SDL_WINDOW_ALLOW_HIGHDPI;
+#elif defined(__APPLE__)
     // RT64 draws through Metal here, and SDL has to know that when it makes the
     // window: this flag is what gives it a layer-backed view to hang a
     // CAMetalLayer off. Asking for the layer later, on a window made without
