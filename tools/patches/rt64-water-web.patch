@@ -129,7 +129,7 @@ index 20c0d4d..4bde328 100644
              Map[G_EX_PRINT] = &print;
              Map[G_EX_TEXRECT_V1] = &texrectV1;
 diff --git a/src/hle/rt64_application.cpp b/src/hle/rt64_application.cpp
-index c42fde7..e98974a 100644
+index ba5b3b5..6df4829 100644
 --- a/src/hle/rt64_application.cpp
 +++ b/src/hle/rt64_application.cpp
 @@ -721,6 +721,14 @@ namespace RT64 {
@@ -178,7 +178,7 @@ index 0e62be1..9b13108 100644
          // Raytracing parameters.
          // TODO: This is likely better pushed elsewhere and using an index
 diff --git a/src/hle/rt64_game_frame.cpp b/src/hle/rt64_game_frame.cpp
-index 59c388e..cbe60d2 100644
+index 1fdb320..0c29174 100644
 --- a/src/hle/rt64_game_frame.cpp
 +++ b/src/hle/rt64_game_frame.cpp
 @@ -7,6 +7,7 @@
@@ -320,7 +320,7 @@ index 59c388e..cbe60d2 100644
 \ No newline at end of file
 +};
 diff --git a/src/hle/rt64_present_queue.cpp b/src/hle/rt64_present_queue.cpp
-index 98446c5..06497d3 100644
+index 0369db4..cbd71ea 100644
 --- a/src/hle/rt64_present_queue.cpp
 +++ b/src/hle/rt64_present_queue.cpp
 @@ -21,15 +21,30 @@ namespace RT64 {
@@ -357,7 +357,7 @@ index 98446c5..06497d3 100644
      }
  
      void PresentQueue::reset() {
-@@ -284,15 +299,16 @@ namespace RT64 {
+@@ -291,7 +306,7 @@ namespace RT64 {
              }
          }
          
@@ -366,7 +366,8 @@ index 98446c5..06497d3 100644
              uint32_t frameCountersNextPresented = 0;
              if ((framesToPresent > 1) && (usingMSAA || (i > 0))) {
                  // Stall until the interpolated color target is available.
-                 const uint32_t targetIndex = usingMSAA ? i : (i - 1);
+@@ -299,8 +314,9 @@ namespace RT64 {
+                 PhaseTimer phaseTimer(this, PhaseInterpolated);
                  std::unique_lock<std::mutex> interpolatedLock(ext.sharedResources->interpolatedMutex);
                  ext.sharedResources->interpolatedCondition.wait(interpolatedLock, [&]() {
 -                    return (frameCounters.available > targetIndex) || ((frameCounters.available == targetIndex) && frameCounters.skipped);
@@ -376,7 +377,7 @@ index 98446c5..06497d3 100644
  
                  // Do not present any more frames after this one after reaching the last available frame if the workload was skipped.
                  if ((frameCounters.available == targetIndex) && frameCounters.skipped) {
-@@ -446,6 +462,9 @@ namespace RT64 {
+@@ -468,6 +484,9 @@ namespace RT64 {
                  presentProfiler.logAndRestart();
              }
          }
@@ -386,20 +387,20 @@ index 98446c5..06497d3 100644
      }
  
      void PresentQueue::skipInterpolation() {
-@@ -630,6 +649,8 @@ namespace RT64 {
+@@ -709,6 +728,8 @@ namespace RT64 {
                  }
              }
  
 +            if (!presentThreadRunning) break;
 +
-             if (processCursor >= 0) {
-                 std::unique_lock<std::mutex> threadLock(threadMutex);
-                 const bool needsResize = ext.swapChain->needsResize() || !swapChainValid;
+             // present-stats: a game frame ended at each present the thread came to without waiting for it, unless the one
+             // before was dropped (a second of a burst, reported without the frames).
+             if (presentStats && (processCursor >= 0)) {
 diff --git a/src/hle/rt64_present_queue.h b/src/hle/rt64_present_queue.h
-index ffe572c..cc3b5a6 100644
+index d41b750..aa4b0d8 100644
 --- a/src/hle/rt64_present_queue.h
 +++ b/src/hle/rt64_present_queue.h
-@@ -72,6 +72,8 @@ namespace RT64 {
+@@ -95,6 +95,8 @@ namespace RT64 {
  
          PresentQueue();
          ~PresentQueue();
@@ -408,7 +409,7 @@ index ffe572c..cc3b5a6 100644
          void reset();
          void advanceToNextPresent();
          void repeatLastPresent();
-@@ -86,4 +88,4 @@ namespace RT64 {
+@@ -111,4 +113,4 @@ namespace RT64 {
          void threadAdvanceBarrier();
          void threadLoop();
      };
@@ -416,7 +417,7 @@ index ffe572c..cc3b5a6 100644
 \ No newline at end of file
 +};
 diff --git a/src/hle/rt64_state.cpp b/src/hle/rt64_state.cpp
-index e623199..75eb068 100644
+index 43b6062..73236f3 100644
 --- a/src/hle/rt64_state.cpp
 +++ b/src/hle/rt64_state.cpp
 @@ -121,6 +121,7 @@ namespace RT64 {
@@ -946,7 +947,7 @@ index 1dd31f7..ef50dad 100644
  
              if (device != nullptr) {
 diff --git a/src/render/rt64_framebuffer_renderer.cpp b/src/render/rt64_framebuffer_renderer.cpp
-index 6c7a24f..90dad64 100644
+index 7cce9d1..99392f9 100644
 --- a/src/render/rt64_framebuffer_renderer.cpp
 +++ b/src/render/rt64_framebuffer_renderer.cpp
 @@ -16,6 +16,10 @@
