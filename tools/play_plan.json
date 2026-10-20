@@ -1,13 +1,68 @@
 {
-  "header": ["The page's plan for N64Recomp-browser's tools/play_page.mjs: the launcher, Load ROM on a new profile,",
-             "Start Game, then the logos, the title and the attract demo, which play by themselves. Load ROM waits for",
-             "the shader list Chrome builds behind the launcher (a laptop's GPU busy with it took no click until it was",
-             "done); Firefox builds none there, and its line saying so is the one waited for. The 6 s after it are the plan's",
-             "earlier wait, which was enough off the desktop in both browsers."],
+  "header": [
+    "The page's plan for N64Recomp-browser's tools/play_page.mjs: the launcher, Load ROM on a new profile, Start Game,",
+    "then the title (the game's state 2, read in RDRAM: in Firefox the console line saying so comes before the plan",
+    "plays) and a Normal Championship's first three races as tools/shader_plan.json's second championship section plays",
+    "them: the menus passed by pressing until the game's state (gGameState, 0x800DAB24) says the next screen is up, each",
+    "race raced 30 s with the gas held and tools/autopilot.js steering, then ended by putting the rider on its last lap",
+    "with every buoy taken, and its finish and results pressed through to the next race (Sunny Beach, Sunset Bay, Marine",
+    "Fortress) and, after the third, to the screens a championship ends with when the rider doesn't qualify. A race's",
+    "time is the game's own (the frame counter at 0x80151960, 20 a second): ridden longer the autopilot misses enough",
+    "buoys to be disqualified, and one disqualified sooner (state 0x29) races the course again, which the plan takes as",
+    "the next race. Load ROM waits for the shader list Chrome builds behind the launcher (a laptop's GPU busy with it",
+    "took no click until it was done); Firefox builds none there, and its line saying so is the one waited for."
+  ],
   "page": "WaveRace64Recomp.html",
-  "load": [["until", "Device Name", 60000], ["until", "RT64: all \\d+ prebuilt shaders built|once the game draws", 60000],
-           ["wait", 6000]],
-  "setup": [["rom", 628, 364], ["wait", 4000]],
-  "start": [["click", 628, 364]],
-  "play": [["wait", 60000]]
+  "load": [
+    ["until", "Device Name", 60000],
+    ["until", "RT64: all \\d+ prebuilt shaders built|once the game draws", 60000],
+    ["wait", 6000]
+  ],
+  "setup": [
+    ["rom", 628, 364],
+    ["wait", 4000]
+  ],
+  "start": [
+    ["click", 628, 364]
+  ],
+  "play": [
+    ["eval", "new Promise((r) => { const t0 = Date.now(), i = setInterval(() => { const s = n64r(0x800DAB24); if (s >= 2 || Date.now() - t0 > 60000) { clearInterval(i); r(\"state 0x\" + s.toString(16)); } }, 100); })"],
+    ["shot", "title.png"],
+    ["pressUntil", "Enter", "Enter", 13, 150, 1000, "n64r(0x800DAB24)==3", 60000],
+    ["wait", 3000],
+    ["hold", "Enter", "Enter", 13, 150],
+    ["wait", 2000],
+    ["pressUntil", "Enter", "Enter", 13, 150, 1000, "n64r(0x800DAB24)==0x28 && n64r(0x801CE620)==4 && n64r(0x800D8170)==1", 90000],
+    ["clock", "n64r(0x80151960)", 20],
+    ["wait", 3000],
+    ["eval", "(clearInterval(window.noRetire), window.noRetire = setInterval(() => { for (let s = 0; s < 4; s++) { const a = 0x801C2938 + s * 0x378 + 0x2E8, v = n64r(a); if (v > 0 && v < 40) n64w(a, 59); } }, 1), 0)"],
+    ["evalFile", "autopilot.js"],
+    ["down", "KeyX", "x", 88],
+    ["wait", 8000],
+    ["shot", "sunny.png"],
+    ["wait", 22000],
+    ["eval", "new Promise((r) => { const slot = n64r(0x800D48DC), a = 0x801C2938 + slot * 0x378, count = n64r(0x801BB120); n64w(a, 3); n64w(a + 0xC, 3 * count); n64w(a + 0x2F4, 1); const t0 = Date.now(), i = setInterval(() => { if (n64r(0x800DAB24) !== 0x28 || Date.now() - t0 > 15000) { clearInterval(i); r(\"course \" + n64r(0x800D8170) + \" state 0x\" + n64r(0x800DAB24).toString(16)); } }, 100); })"],
+    ["up", "KeyX", "x", 88],
+    ["eval", "window.lastCourse = n64r(0x800DAB24) === 0x29 ? -1 : n64r(0x800D8170), 0"],
+    ["pressUntil", "Enter", "Enter", 13, 150, 1500, "n64r(0x800DAB24)==0x28 && n64r(0x800D8170)!==window.lastCourse", 60000],
+    ["wait", 3000],
+    ["down", "KeyX", "x", 88],
+    ["wait", 8000],
+    ["shot", "sunset.png"],
+    ["wait", 22000],
+    ["eval", "new Promise((r) => { const slot = n64r(0x800D48DC), a = 0x801C2938 + slot * 0x378, count = n64r(0x801BB120); n64w(a, 3); n64w(a + 0xC, 3 * count); n64w(a + 0x2F4, 1); const t0 = Date.now(), i = setInterval(() => { if (n64r(0x800DAB24) !== 0x28 || Date.now() - t0 > 15000) { clearInterval(i); r(\"course \" + n64r(0x800D8170) + \" state 0x\" + n64r(0x800DAB24).toString(16)); } }, 100); })"],
+    ["up", "KeyX", "x", 88],
+    ["eval", "window.lastCourse = n64r(0x800DAB24) === 0x29 ? -1 : n64r(0x800D8170), 0"],
+    ["pressUntil", "Enter", "Enter", 13, 150, 1500, "n64r(0x800DAB24)==0x28 && n64r(0x800D8170)!==window.lastCourse", 60000],
+    ["wait", 3000],
+    ["down", "KeyX", "x", 88],
+    ["wait", 8000],
+    ["shot", "fortress.png"],
+    ["wait", 22000],
+    ["eval", "new Promise((r) => { const slot = n64r(0x800D48DC), a = 0x801C2938 + slot * 0x378, count = n64r(0x801BB120); n64w(a, 3); n64w(a + 0xC, 3 * count); n64w(a + 0x2F4, 1); const t0 = Date.now(), i = setInterval(() => { if (n64r(0x800DAB24) !== 0x28 || Date.now() - t0 > 15000) { clearInterval(i); r(\"course \" + n64r(0x800D8170) + \" state 0x\" + n64r(0x800DAB24).toString(16)); } }, 100); })"],
+    ["up", "KeyX", "x", 88],
+    ["eval", "window.lastCourse = n64r(0x800DAB24) === 0x29 ? -1 : n64r(0x800D8170), 0"],
+    ["pressUntil", "Enter", "Enter", 13, 150, 1500, "n64r(0x800DAB24)==0x1e && n64r(0x800D8170)==1", 60000],
+    ["eval", "window.autopilot(false), 0"]
+  ]
 }
