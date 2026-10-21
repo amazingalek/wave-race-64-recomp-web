@@ -716,6 +716,12 @@ up, puts each course's place in the course select cursor, and holds the gas whil
 next buoy on the side it is passed, turning off a wall it has run into, and keeps the countdown that retires a rider
 off the course from running out. 2P VS isn't recorded: it needs a second pad.
 
+`tools/play_plan.json` is the page's regular play, 2-3 minutes with every timeout counted, which N64Recomp-browser's
+`tools/play_page.mjs` plays to measure the page: the menus to a Normal Championship's first race, Sunny Beach, raced a
+minute of the game's time. `tools/play_plan_extended.json`, at most 5 minutes, goes on through that race's finish and
+results to Sunset Bay and Marine Fortress, for when a longer play is needed, and the shaders it misses go into the
+list. Each plan's header says what it plays.
+
 RT64's render to RAM, which draws each frame a second time at the N64's size and reads it back into RDRAM, is off on
 the page (`src/frontend.cpp`; the desktop keeps RT64's default). In a browser the readback makes every display list
 wait for the GPU process, and the game's CPU never reads a frame: the one place it would, `sys_main.c`'s copy of the
