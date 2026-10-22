@@ -804,10 +804,15 @@ index 3c5bbef..0d459bd 100644
              ext.workloadGraphicsWorker->execute();
              ext.workloadGraphicsWorker->wait();
              workerMutex.unlock();
-@@ -863,6 +905,29 @@ namespace RT64 {
+@@ -866,7 +908,34 @@ namespace RT64 {
              queryPool->queryResults();
              const uint64_t *frameTimestamps = queryPool->getResults();
              rendererGPUProfiler.log(double(frameTimestamps[1] - frameTimestamps[0]) / 1000000.0);
++            const double waterGpuMs=double(frameTimestamps[1]-frameTimestamps[0])/1000000.0;
++#       else
++            // No timestamps on WebGPU (plume's queries read zeros), so the water profile's GPU time is 0 as it was.
++            const double waterGpuMs=0.0;
+ #       endif
 +            static FILE *waterFrameProfile=[]() {
 +                const char *name=std::getenv("WR64_FRAME_PROFILE");
 +                FILE *f=name ? std::fopen(name,"w") : nullptr;
@@ -825,11 +830,11 @@ index 3c5bbef..0d459bd 100644
 +                std::fprintf(waterFrameProfile,"%llu,%.0f,%.0f,%u,%u,%u,%zu,%.5f,%.5f,%llu\n",(unsigned long long)workload.submissionFrame,
 +                    active ? water->draws.front().material.identity.x : 0,active ? water->draws.front().material.identity.z : -1,
 +                    width,height,targetManager.multisampling.sampleCount,active ? water->sceneKeys.size() : 0,waterCpuPrepareMs,
-+                    double(frameTimestamps[1]-frameTimestamps[0])/1000000.0,(unsigned long long)(water ? water->allocationBytes() : 0));
++                    waterGpuMs,(unsigned long long)(water ? water->allocationBytes() : 0));
 +                std::fflush(waterFrameProfile);
 +            }
 +            if (framebufferRenderer->waterRenderer) {
-+                framebufferRenderer->waterRenderer->finishProfile(double(frameTimestamps[1]-frameTimestamps[0])/1000000.0);
++                framebufferRenderer->waterRenderer->finishProfile(waterGpuMs);
 +            }
  
              // Indicate to the texture cache it's safe to delete the textures if no locks are active.
