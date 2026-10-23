@@ -661,7 +661,7 @@ rate and a race at twice; a 144 Hz panel gets 144 either way.
 
 This fork's `main` branch also builds with [Emscripten](https://emscripten.org) into a page, `WaveRace64Recomp.html`,
 that draws through WebGPU. `lib/RT64`, `lib/N64ModernRuntime` and `lib/RecompFrontend` are this port's own, at the
-same commits, and [N64Recomp-browser](https://github.com/amazingalek/N64Recomp-browser) (`lib/N64Recomp-browser`)
+same commits, and [N64Recomp-browser](https://github.com/n64hub/N64Recomp-browser) (`lib/N64Recomp-browser`)
 patches their checkouts with the web support and makes the game a page. Mods and Quit are off on the page.
 
 The port's own patch scripts then go on top, as for the desktop. `tools/web_patch.sh` does both in that order, from
