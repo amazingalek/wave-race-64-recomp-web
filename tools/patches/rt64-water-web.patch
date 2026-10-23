@@ -450,9 +450,9 @@ diff --git a/src/hle/rt64_state.h b/src/hle/rt64_state.h
 index 551816c..b11cccf 100644
 --- a/src/hle/rt64_state.h
 +++ b/src/hle/rt64_state.h
-@@ -84,6 +84,7 @@ namespace RT64 {
-         std::vector<uint64_t> evictedTextureHashes;
-         std::unique_ptr<RenderTarget> dummyDepthTarget;
+@@ -96,6 +96,7 @@ namespace RT64 {
+         DummyDepthTargets dummyDepthTargets;
+ #   endif
          DrawCall drawCall;
 +        interop::WaterMaterial waterMaterial{};
          DrawStatus drawStatus;
@@ -796,14 +796,14 @@ index 3c5bbef..0d459bd 100644
                      drawParams.ubershadersOnly = ubershadersOnly || workload.extended.pipelineWarmUp;
                      drawParams.drawsNothing = workload.extended.pipelineWarmUp;
                      drawParams.postBlendNoise = workloadConfig.postBlendNoise;
-@@ -855,6 +896,7 @@ namespace RT64 {
+@@ -880,6 +921,7 @@ namespace RT64 {
              ext.workloadGraphicsWorker->commandList->writeTimestamp(queryPool.get(), 1);
              ext.workloadGraphicsWorker->commandList->end();
              framebufferRenderer->waitForUploaders();
 +            const double waterCpuPrepareMs=waterCpuPrepare.elapsedMilliseconds();
              ext.workloadGraphicsWorker->execute();
              ext.workloadGraphicsWorker->wait();
-             workerMutex.unlock();
+ 
 @@ -866,7 +908,34 @@ namespace RT64 {
              queryPool->queryResults();
              const uint64_t *frameTimestamps = queryPool->getResults();
